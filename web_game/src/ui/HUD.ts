@@ -11,18 +11,33 @@ export class HUD {
   private readonly root: HTMLElement;
   private readonly valueEls: Record<ResourceType, HTMLSpanElement>;
   private readonly pillEls: Record<ResourceType, HTMLDivElement>;
+  private readonly statusPillEl: HTMLDivElement;
+  private readonly bannerEl: HTMLDivElement;
+  private readonly tipEl: HTMLDivElement;
   private readonly stackTextEl: HTMLSpanElement;
   private readonly stackFillEl: HTMLDivElement;
   private readonly muteBtn: HTMLButtonElement;
-  private readonly prevCounts: ResourceCounts = { cash: 0, wood: 0, meat: 0, gold: 0 };
+  readonly upgradeBtn: HTMLButtonElement;
 
-  constructor(root: HTMLElement, onToggleMute: () => boolean) {
+  private readonly prevCounts: ResourceCounts = { cash: -1, wood: -1, meat: -1, gold: -1 };
+  private bannerTimer = 0;
+
+  constructor(
+    root: HTMLElement,
+    onToggleMute: () => boolean,
+    onOpenUpgrades: () => void,
+  ) {
     this.root = root;
 
     const title = document.createElement('div');
     title.className = 'title-badge';
     title.textContent = 'FROSTBOUND OUTPOST';
     this.root.appendChild(title);
+
+    this.statusPillEl = document.createElement('div');
+    this.statusPillEl.className = 'status-pill';
+    this.statusPillEl.textContent = '🔥 100% · DAY 1 · W1';
+    this.root.appendChild(this.statusPillEl);
 
     this.muteBtn = document.createElement('button');
     this.muteBtn.className = 'hud-mute-btn';
@@ -71,18 +86,61 @@ export class HUD {
 
     this.root.appendChild(panel);
 
+    this.bannerEl = document.createElement('div');
+    this.bannerEl.className = 'event-banner hidden';
+    this.root.appendChild(this.bannerEl);
+
+    this.tipEl = document.createElement('div');
+    this.tipEl.className = 'tutorial-tip';
+    this.tipEl.textContent = 'Drag to chop trees & hunt!';
+    this.root.appendChild(this.tipEl);
+
+    this.upgradeBtn = document.createElement('button');
+    this.upgradeBtn.type = 'button';
+    this.upgradeBtn.className = 'upgrade-open-btn';
+    this.upgradeBtn.setAttribute('data-testid', 'open-upgrades');
+    this.upgradeBtn.textContent = '⚡ UPGRADES';
+    this.upgradeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onOpenUpgrades();
+    });
+    this.root.appendChild(this.upgradeBtn);
+
     const stackBar = document.createElement('div');
     stackBar.className = 'stack-bar';
     this.stackFillEl = document.createElement('div');
     this.stackFillEl.className = 'stack-bar-fill';
     this.stackTextEl = document.createElement('span');
     this.stackTextEl.className = 'stack-bar-text';
-    this.stackTextEl.textContent = 'BACKPACK 0 / 12';
+    this.stackTextEl.textContent = 'PACK 0 / 12';
     stackBar.append(this.stackFillEl, this.stackTextEl);
     this.root.appendChild(stackBar);
   }
 
-  update(counts: ResourceCounts, carryCount: number, maxCarry: number): void {
+  showBanner(text: string, duration = 3.2): void {
+    this.bannerEl.textContent = text;
+    this.bannerEl.classList.remove('hidden');
+    this.bannerTimer = duration;
+  }
+
+  update(
+    counts: ResourceCounts,
+    carryCount: number,
+    maxCarry: number,
+    warmth: number,
+    day: number,
+    wave: number,
+    blizzard: boolean,
+    tutorialText: string,
+    dt: number,
+  ): void {
+    if (this.bannerTimer > 0) {
+      this.bannerTimer -= dt;
+      if (this.bannerTimer <= 0) {
+        this.bannerEl.classList.add('hidden');
+      }
+    }
+
     (['cash', 'wood', 'meat', 'gold'] as ResourceType[]).forEach((key) => {
       const next = Math.floor(counts[key]);
       if (next !== this.prevCounts[key]) {
@@ -100,5 +158,18 @@ export class HUD {
     this.stackFillEl.classList.toggle('full', carryCount >= maxCarry);
     this.stackTextEl.textContent =
       carryCount >= maxCarry ? `FULL ${carryCount} / ${maxCarry}` : `PACK ${carryCount} / ${maxCarry}`;
+
+    const warmPct = Math.round(warmth);
+    this.statusPillEl.textContent = blizzard
+      ? `❄️ BLIZZARD · 🔥 ${warmPct}%`
+      : `🔥 ${warmPct}% · DAY ${day} · W${wave}`;
+    this.statusPillEl.classList.toggle('cold', warmth < 35 || blizzard);
+
+    if (tutorialText) {
+      this.tipEl.textContent = tutorialText;
+      this.tipEl.classList.remove('hidden');
+    } else {
+      this.tipEl.classList.add('hidden');
+    }
   }
 }
