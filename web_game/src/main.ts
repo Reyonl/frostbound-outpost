@@ -1,8 +1,14 @@
+import { AudioSynth } from './core/AudioSynth';
 import { Engine } from './core/Engine';
-import { EnvironmentSystem } from './systems/EnvironmentSystem';
-import { InputSystem } from './systems/InputSystem';
+import { AxeRing } from './entities/AxeRing';
 import { Player } from './entities/Player';
 import { TreeCluster } from './entities/TreeCluster';
+import { CombatSystem } from './systems/CombatSystem';
+import { EnvironmentSystem } from './systems/EnvironmentSystem';
+import { InputSystem } from './systems/InputSystem';
+import { ParticleSystem } from './systems/ParticleSystem';
+import { StackSystem } from './systems/StackSystem';
+import { HUD, type ResourceCounts } from './ui/HUD';
 
 declare global {
   interface Window {
@@ -14,10 +20,18 @@ declare global {
 
 export class FrostboundGame {
   private readonly engine: Engine;
+  private readonly audio: AudioSynth;
   private readonly input: InputSystem;
   private readonly environment: EnvironmentSystem;
   private readonly player: Player;
+  private readonly axeRing: AxeRing;
   private readonly trees: TreeCluster;
+  private readonly particles: ParticleSystem;
+  private readonly stack: StackSystem;
+  private readonly combat: CombatSystem;
+  private readonly hud: HUD;
+
+  private readonly counts: ResourceCounts = { cash: 0, wood: 0, meat: 0, gold: 0 };
 
   private rafId = 0;
   private lastTime = 0;
@@ -26,37 +40,63 @@ export class FrostboundGame {
 
   constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement, joystickZone: HTMLElement) {
     this.engine = new Engine(canvas);
-    this.input = new InputSystem(joystickZone);
+    this.audio = new AudioSynth();
+    this.input = new InputSystem(joystickZone, () => this.audio.unlock());
     this.environment = new EnvironmentSystem(this.engine.scene);
     this.player = new Player(this.engine.scene);
+    this.axeRing = new AxeRing(this.player.group);
     this.trees = new TreeCluster(this.engine.scene);
-
-    const badge = document.createElement('div');
-    badge.className = 'title-badge';
-    badge.textContent = 'FROSTBOUND OUTPOST';
-    hudRoot.appendChild(badge);
+    this.particles = new ParticleSystem(this.engine.scene);
+    this.stack = new StackSystem(this.engine.scene, this.player.group);
+    this.combat = new CombatSystem();
+    this.hud = new HUD(hudRoot, () => {
+      this.audio.muted = !this.audio.muted;
+      return this.audio.muted;
+    });
 
     window.FrostboundLifecycle = {
       onPause: () => {
         this.paused = true;
+        this.audio.suspend();
       },
       onResume: () => {
         this.paused = false;
         this.lastTime = performance.now();
+        this.audio.unlock();
       },
     };
 
     window.__frostboundDebug = {
-      getState: () => ({
-        milestone: 'M1',
-        elapsed: Number(this.elapsed.toFixed(2)),
-        player: {
-          x: Number(this.player.position.x.toFixed(2)),
-          z: Number(this.player.position.z.toFixed(2)),
-        },
-        treeCount: this.trees.trees.length,
-        drawCalls: this.engine.renderer.info.render.calls,
-      }),
+      getState: () => {
+        let nearestTree: { x: number; z: number } | null = null;
+        let bestDist = Infinity;
+        for (const t of this.trees.trees) {
+          if (!t.alive) continue;
+          const d = Math.hypot(t.x - this.player.position.x, t.z - this.player.position.z);
+          if (d < bestDist) {
+            bestDist = d;
+            nearestTree = { x: Number(t.x.toFixed(2)), z: Number(t.z.toFixed(2)) };
+          }
+        }
+        return {
+          milestone: 'M2',
+          elapsed: Number(this.elapsed.toFixed(2)),
+          player: {
+            x: Number(this.player.position.x.toFixed(2)),
+            z: Number(this.player.position.z.toFixed(2)),
+          },
+          nearestTree,
+          stackCount: this.stack.count,
+          counts: {
+            cash: this.counts.cash,
+            wood: this.counts.wood + this.stack.countOf('wood'),
+            meat: this.counts.meat + this.stack.countOf('meat'),
+            gold: this.counts.gold + this.stack.countOf('gold'),
+          },
+          treeCount: this.trees.trees.length,
+          drawCalls: this.engine.renderer.info.render.calls,
+        };
+      },
     };
   }
 
@@ -66,16 +106,43 @@ export class FrostboundGame {
       this.rafId = requestAnimationFrame(tick);
       if (this.paused) return;
 
-      const dt = Math.min(0.05, Math.max(0.001, (now - this.lastTime) / 1000));
+      const rawDt = Math.min(0.05, Math.max(0.001, (now - this.lastTime) / 1000));
       this.lastTime = now;
-      this.elapsed += dt;
+      const dt = this.combat.consumeHitStop(rawDt);
+      this.elapsed += rawDt;
 
       const move = this.input.getMoveVector();
       this.player.update(move, dt);
+      this.axeRing.update(dt);
+      this.combat.updateTreeChopping(
+        dt,
+        this.axeRing,
+        this.trees,
+        this.player,
+        this.stack,
+        this.particles,
+        this.audio,
+        this.engine,
+      );
       this.trees.update(dt);
+      this.stack.update(dt, this.player.position);
+      this.particles.update(dt);
       this.environment.update(dt, this.player.position.x, this.player.position.z);
-      this.engine.updateCamera(this.player.position, move.x, move.z, dt);
+
+      this.engine.setStackZoom(this.stack.count);
+      this.engine.updateCamera(this.player.position, move.x, move.z, rawDt);
       this.engine.render();
+
+      this.hud.update(
+        {
+          cash: this.counts.cash,
+          wood: this.counts.wood + this.stack.countOf('wood'),
+          meat: this.counts.meat + this.stack.countOf('meat'),
+          gold: this.counts.gold + this.stack.countOf('gold'),
+        },
+        this.stack.count,
+        this.stack.maxCapacity,
+      );
     };
     this.rafId = requestAnimationFrame(tick);
   }
