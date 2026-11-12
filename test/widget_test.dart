@@ -1,30 +1,22 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
 import 'package:frostbound_outpost/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  test('normalizeWebAssetPath maps root and prevents traversal', () {
+    expect(normalizeWebAssetPath('/'), 'assets/web/index.html');
+    expect(normalizeWebAssetPath(''), 'assets/web/index.html');
+    expect(normalizeWebAssetPath('/assets/index.js?v=1'), 'assets/web/assets/index.js');
+    expect(normalizeWebAssetPath('/../secret.txt'), 'assets/web/secret.txt');
+  });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+  test('contentTypeForAsset returns correct MIME types', () {
+    expect(contentTypeForAsset('index.html').mimeType, 'text/html');
+    expect(contentTypeForAsset('assets/main.js').mimeType, 'application/javascript');
+    expect(contentTypeForAsset('assets/style.css').mimeType, 'text/css');
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  testWidgets('FrostboundApp renders splash overlay when WebView disabled in test', (tester) async {
+    await tester.pumpWidget(const FrostboundApp(enableWebView: false));
+    expect(find.text('FROSTBOUND OUTPOST'), findsOneWidget);
   });
 }
