@@ -112,7 +112,7 @@ export class Station {
         side: THREE.DoubleSide,
       }),
     );
-    this.ringMesh.position.set(config.dropOffset.x, 0.06, config.dropOffset.z);
+    this.ringMesh.position.set(config.dropOffset.x, 0.085, config.dropOffset.z);
     this.group.add(this.ringMesh);
 
     // Canvas floor badge showing station name & queued/processed count
@@ -129,7 +129,7 @@ export class Station {
       new THREE.MeshBasicMaterial({ map: this.badgeTexture, transparent: true }),
     );
     badgePlane.rotation.x = -Math.PI / 2;
-    badgePlane.position.set(config.dropOffset.x, 0.07, config.dropOffset.z);
+    badgePlane.position.set(config.dropOffset.x, 0.095, config.dropOffset.z);
     this.group.add(badgePlane);
     this.redrawBadge();
   }
