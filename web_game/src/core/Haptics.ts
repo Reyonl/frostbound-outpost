@@ -22,6 +22,11 @@ const VIBRATE_MS: Record<HapticStyle, number> = {
 };
 
 let lastHapticAt = 0;
+let hapticsUnlocked = false;
+
+export function unlockHaptics(): void {
+  hapticsUnlocked = true;
+}
 
 export function triggerHaptic(style: HapticStyle = 'light', minCooldownMs = 45): void {
   const now = performance.now();
@@ -32,7 +37,13 @@ export function triggerHaptic(style: HapticStyle = 'light', minCooldownMs = 45):
     window.FrostboundNative.postMessage(`haptic:${style}`);
     return;
   }
-  if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+
+  const hasUserActivation =
+    hapticsUnlocked &&
+    typeof navigator !== 'undefined' &&
+    (!('userActivation' in navigator) || navigator.userActivation?.hasBeenActive === true);
+
+  if (hasUserActivation && typeof navigator.vibrate === 'function') {
     navigator.vibrate(VIBRATE_MS[style]);
   }
 }
