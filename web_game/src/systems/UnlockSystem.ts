@@ -57,18 +57,22 @@ export class UnlockSystem {
       const group = new THREE.Group();
       group.position.set(d.x, 0.085, d.z);
 
+      // 2x crisp high-DPI canvas
       const canvas = document.createElement('canvas');
-      canvas.width = 256;
-      canvas.height = 192;
+      canvas.width = 512;
+      canvas.height = 384;
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('2D canvas context unavailable');
       const texture = new THREE.CanvasTexture(canvas);
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
 
       const mesh = new THREE.Mesh(
         new THREE.PlaneGeometry(2.15, 1.6),
         new THREE.MeshBasicMaterial({ map: texture, transparent: true }),
       );
       mesh.rotation.x = -Math.PI / 2;
+      mesh.receiveShadow = false;
       group.add(mesh);
       scene.add(group);
 
@@ -95,36 +99,40 @@ export class UnlockSystem {
     pad.lastDrawnPaid = pad.paid;
 
     const ctx = pad.ctx;
-    ctx.clearRect(0, 0, 256, 192);
+    ctx.clearRect(0, 0, 512, 384);
 
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
+    // Subtle dark translucent background card
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.76)';
     ctx.beginPath();
-    ctx.roundRect(14, 14, 228, 164, 22);
+    ctx.roundRect(28, 28, 456, 328, 44);
     ctx.fill();
 
+    // High-contrast dashed green border
     ctx.strokeStyle = '#4ade80';
-    ctx.lineWidth = 6;
-    ctx.setLineDash([16, 10]);
+    ctx.lineWidth = 10;
+    ctx.setLineDash([32, 20]);
     ctx.beginPath();
-    ctx.roundRect(18, 18, 220, 156, 20);
+    ctx.roundRect(36, 36, 440, 312, 40);
     ctx.stroke();
     ctx.setLineDash([]);
 
     // Progress bar inside pad
     const pct = Math.min(1, pad.paid / Math.max(1, pad.cost));
     ctx.fillStyle = 'rgba(30, 41, 59, 0.9)';
-    ctx.fillRect(34, 128, 188, 22);
+    ctx.fillRect(68, 260, 376, 40);
     ctx.fillStyle = '#22c55e';
-    ctx.fillRect(34, 128, 188 * pct, 22);
+    ctx.fillRect(68, 260, 376 * pct, 40);
 
+    // Label header
     ctx.fillStyle = '#f8fafc';
-    ctx.font = 'bold 24px system-ui, sans-serif';
+    ctx.font = 'bold 44px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(pad.label, 128, 64);
+    ctx.fillText(pad.label, 256, 126);
 
+    // Remaining cost counter
     ctx.fillStyle = '#4ade80';
-    ctx.font = 'bold 34px system-ui, sans-serif';
-    ctx.fillText(`$${pad.cost - pad.paid}`, 128, 108);
+    ctx.font = 'bold 68px system-ui, sans-serif';
+    ctx.fillText(`$${pad.cost - pad.paid}`, 256, 216);
 
     pad.texture.needsUpdate = true;
   }
@@ -179,9 +187,9 @@ export class UnlockSystem {
             pad.unlocked = true;
             pad.group.visible = false;
             audio.playUnlock();
-            triggerHaptic('heavy', 80);
-            particles.burst(pad.position.x, 1.2, pad.position.z, 0x38bdf8, 16, 5.4, 1.1);
-            floatingText.spawn(pad.position.x, 2.1, pad.position.z, `${pad.label} BUILT!`, '#38bdf8', 1.2);
+            particles.burst(pad.position.x, 1.0, pad.position.z, 0xfacc15, 12, 5.0, 1.2);
+            floatingText.spawn(pad.position.x, 1.6, pad.position.z, `${pad.label} UNLOCKED!`, '#4ade80');
+            triggerHaptic('heavy');
             onUnlocked(pad.id);
           }
         }

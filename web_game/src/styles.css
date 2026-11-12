@@ -124,6 +124,39 @@ body,
   cursor: pointer;
 }
 
+.hud-quality-btn {
+  position: fixed;
+  top: max(72px, calc(env(safe-area-inset-top) + 60px));
+  left: 52px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(125, 211, 252, 0.4);
+  background: rgba(15, 23, 42, 0.74);
+  color: #f8fafc;
+  font-size: 11px;
+  font-weight: 800;
+  pointer-events: auto;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+}
+
+.debug-hud {
+  position: fixed;
+  top: max(112px, calc(env(safe-area-inset-top) + 100px));
+  left: 12px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.82);
+  border: 1px solid rgba(125, 211, 252, 0.35);
+  color: #38bdf8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  pointer-events: none;
+  z-index: 30;
+}
+
 .resource-hud {
   position: fixed;
   top: max(12px, env(safe-area-inset-top));
