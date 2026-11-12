@@ -82,7 +82,7 @@ def touch_drag(driver: webdriver.Chrome, start_x: int, start_y: int, dx: int, dy
     actions.perform()
 
 
-def steer_toward(driver: webdriver.Chrome, target_x: float, target_z: float, hold_sec: float = 1.8) -> None:
+def steer_toward(driver: webdriver.Chrome, target_x: float, target_z: float, hold_sec: float = 1.4) -> None:
     state = driver.execute_script("return window.__frostboundDebug.getState();")
     px = state["player"]["x"]
     pz = state["player"]["z"]
@@ -118,6 +118,7 @@ def run_qa(milestone: str, dist_dir: Path, evidence_dir: Path) -> dict[str, Any]
 
         has_debug = bool(driver.execute_script("return Boolean(window.__frostboundDebug);"))
         before_state = driver.execute_script("return window.__frostboundDebug?.getState?.() ?? null;")
+        chopped_peak = 0
 
         if has_debug:
             if milestone == "m1":
@@ -125,10 +126,20 @@ def run_qa(milestone: str, dist_dir: Path, evidence_dir: Path) -> dict[str, Any]
             else:
                 for _ in range(4):
                     st = driver.execute_script("return window.__frostboundDebug.getState();")
-                    if st.get("counts", {}).get("wood", 0) >= 3:
+                    chopped_peak = max(chopped_peak, st.get("counts", {}).get("wood", 0))
+                    if chopped_peak >= 3:
                         break
                     tree = st.get("nearestTree") or {"x": 8.0, "z": -8.0}
                     steer_toward(driver, tree["x"], tree["z"], hold_sec=1.5)
+
+                if milestone in ("m3", "m4", "m5", "m6"):
+                    for _ in range(4):
+                        st = driver.execute_script("return window.__frostboundDebug.getState();")
+                        drop = st.get("sawmillDrop") or {"x": -3.6, "z": 0.4}
+                        dist = math.hypot(st["player"]["x"] - drop["x"], st["player"]["z"] - drop["z"])
+                        if dist <= 1.6 and st.get("stackCount", 0) == 0:
+                            break
+                        steer_toward(driver, drop["x"], drop["z"], hold_sec=min(1.4, max(0.35, dist / 6.0)))
 
             WebDriverWait(driver, 10).until(
                 lambda d: (d.execute_script("return window.__frostboundDebug.getState().elapsed;") or 0) > 0.5
@@ -169,7 +180,7 @@ def run_qa(milestone: str, dist_dir: Path, evidence_dir: Path) -> dict[str, Any]
                     failure_reasons.append("Player did not move after joystick touch drag")
 
                 if milestone in ("m2", "m3", "m4", "m5", "m6"):
-                    if after_state.get("counts", {}).get("wood", 0) <= 0:
+                    if max(chopped_peak, after_state.get("counts", {}).get("wood", 0)) <= 0:
                         passed = False
                         failure_reasons.append("Wood count remained 0 after chopping forest sweep")
 
