@@ -1,121 +1,265 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 void main() {
-  runApp(const MyApp());
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  runApp(const FrostboundApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+/// Resolves an HTTP request path to a bundled Flutter asset path under `assets/web/`.
+String normalizeWebAssetPath(String requestPath) {
+  var cleaned = requestPath.split('?').first.replaceAll('\\', '/');
+  while (cleaned.startsWith('/')) {
+    cleaned = cleaned.substring(1);
+  }
+  if (cleaned.isEmpty) {
+    cleaned = 'index.html';
+  }
+  final segments = cleaned.split('/').where((s) => s.isNotEmpty && s != '.' && s != '..');
+  final normalized = segments.join('/');
+  return normalized.isEmpty ? 'assets/web/index.html' : 'assets/web/$normalized';
+}
 
-  // This widget is the root of your application.
+/// Returns the Content-Type header value for bundled static game files.
+ContentType contentTypeForAsset(String path) {
+  final lower = path.toLowerCase();
+  if (lower.endsWith('.html')) return ContentType('text', 'html', charset: 'utf-8');
+  if (lower.endsWith('.js') || lower.endsWith('.mjs')) {
+    return ContentType('application', 'javascript', charset: 'utf-8');
+  }
+  if (lower.endsWith('.css')) return ContentType('text', 'css', charset: 'utf-8');
+  if (lower.endsWith('.json')) return ContentType('application', 'json', charset: 'utf-8');
+  if (lower.endsWith('.svg')) return ContentType('image', 'svg+xml');
+  if (lower.endsWith('.png')) return ContentType('image', 'png');
+  if (lower.endsWith('.webp')) return ContentType('image', 'webp');
+  if (lower.endsWith('.wasm')) return ContentType('application', 'wasm');
+  return ContentType.binary;
+}
+
+/// Serves bundled `assets/web/` files over loopback HTTP so ES modules, WebGL,
+/// WebAudio, and persistent origin-scoped localStorage work offline on Android.
+class LocalWebAssetServer {
+  HttpServer? _server;
+
+  int? get port => _server?.port;
+
+  Future<Uri> start() async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    _server = server;
+    unawaited(_serveRequests(server));
+    return Uri.parse('http://127.0.0.1:${server.port}/index.html');
+  }
+
+  Future<void> _serveRequests(HttpServer server) async {
+    await for (final request in server) {
+      final assetPath = normalizeWebAssetPath(request.uri.path);
+      try {
+        final ByteData data = await rootBundle.load(assetPath);
+        request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = contentTypeForAsset(assetPath);
+        request.response.headers.set('Cache-Control', 'no-cache');
+        request.response.add(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
+      } catch (_) {
+        request.response.statusCode = HttpStatus.notFound;
+        request.response.write('Not found: $assetPath');
+      } finally {
+        await request.response.close();
+      }
+    }
+  }
+
+  Future<void> stop() async {
+    await _server?.close(force: true);
+    _server = null;
+  }
+}
+
+class FrostboundApp extends StatelessWidget {
+  const FrostboundApp({super.key, this.enableWebView = true});
+
+  final bool enableWebView;
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Frostbound Outpost',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: const Color(0xFF0A192F),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF0EA5E9),
+          brightness: Brightness.dark,
+        ),
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: FrostboundGameScreen(enableWebView: enableWebView),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+class FrostboundGameScreen extends StatefulWidget {
+  const FrostboundGameScreen({super.key, this.enableWebView = true});
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+  final bool enableWebView;
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<FrostboundGameScreen> createState() => _FrostboundGameScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _FrostboundGameScreenState extends State<FrostboundGameScreen> with WidgetsBindingObserver {
+  final LocalWebAssetServer _assetServer = LocalWebAssetServer();
+  WebViewController? _controller;
+  bool _isReady = false;
+  String? _errorMessage;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    if (widget.enableWebView) {
+      unawaited(_bootstrapGame());
+    }
+  }
+
+  Future<void> _bootstrapGame() async {
+    try {
+      final gameUri = await _assetServer.start();
+      final controller = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setBackgroundColor(const Color(0xFF0A192F))
+        ..addJavaScriptChannel('FrostboundNative', onMessageReceived: _handleNativeMessage)
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageFinished: (_) {
+              if (mounted) {
+                setState(() => _isReady = true);
+              }
+            },
+            onWebResourceError: (error) {
+              if (error.isForMainFrame == true && mounted) {
+                setState(() => _errorMessage = error.description);
+              }
+            },
+          ),
+        );
+
+      final platformController = controller.platform;
+      if (platformController is AndroidWebViewController) {
+        await platformController.setMediaPlaybackRequiresUserGesture(false);
+      }
+
+      await controller.loadRequest(gameUri);
+      if (mounted) {
+        setState(() => _controller = controller);
+      }
+    } catch (err) {
+      if (mounted) {
+        setState(() => _errorMessage = err.toString());
+      }
+    }
+  }
+
+  void _handleNativeMessage(JavaScriptMessage message) {
+    switch (message.message) {
+      case 'haptic:light':
+        HapticFeedback.lightImpact();
+      case 'haptic:medium':
+        HapticFeedback.mediumImpact();
+      case 'haptic:heavy':
+        HapticFeedback.heavyImpact();
+      case 'haptic:selection':
+        HapticFeedback.selectionClick();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final controller = _controller;
+    if (controller == null) return;
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      unawaited(controller.runJavaScript('window.FrostboundLifecycle?.onPause?.();'));
+    } else if (state == AppLifecycleState.resumed) {
+      unawaited(controller.runJavaScript('window.FrostboundLifecycle?.onResume?.();'));
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_assetServer.stop());
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+      backgroundColor: const Color(0xFF0A192F),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (_controller != null) WebViewWidget(controller: _controller!),
+          if (!_isReady) _buildSplashOverlay(),
+        ],
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
+    );
+  }
+
+  Widget _buildSplashOverlay() {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF0A192F), Color(0xFF123C69), Color(0xFF0F172A)],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: Image.asset('assets/icon/app_icon.png', width: 96, height: 96),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'FROSTBOUND OUTPOST',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.6,
+                  color: Color(0xFFF8FAFC),
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (_errorMessage != null)
+                Text(
+                  _errorMessage!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Color(0xFFFCA5A5), fontSize: 13),
+                )
+              else
+                const SizedBox(
+                  width: 140,
+                  child: LinearProgressIndicator(
+                    minHeight: 5,
+                    borderRadius: BorderRadius.all(Radius.circular(8)),
+                    color: Color(0xFF38BDF8),
+                    backgroundColor: Color(0xFF1E293B),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
