@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { GAME_CONFIG } from '../config/gameConfig';
+import { FootprintSystem } from './FootprintSystem';
+import type { GraphicsQuality } from './QualitySettings';
 
 export class Engine {
   readonly renderer: THREE.WebGLRenderer;
@@ -7,13 +9,17 @@ export class Engine {
   readonly camera: THREE.PerspectiveCamera;
   readonly sunLight: THREE.DirectionalLight;
   readonly hemiLight: THREE.HemisphereLight;
+  readonly rimLight: THREE.DirectionalLight;
   readonly fog: THREE.FogExp2;
+  readonly footprints: FootprintSystem;
 
   private readonly targetLook = new THREE.Vector3();
   private readonly desiredCamPos = new THREE.Vector3();
   private readonly shakeOffset = new THREE.Vector3();
   private shakeIntensity = 0;
   private extraZoom = 0;
+  private aspectFactor = 1.0;
+  private currentQuality: GraphicsQuality = 'high';
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -22,10 +28,11 @@ export class Engine {
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.08;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.06;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(GAME_CONFIG.world.fogColor);
@@ -33,100 +40,207 @@ export class Engine {
     this.scene.fog = this.fog;
 
     const aspect = Math.max(window.innerWidth, 1) / Math.max(window.innerHeight, 1);
-    this.camera = new THREE.PerspectiveCamera(GAME_CONFIG.camera.fov, aspect, 0.5, 110);
-    this.camera.position.set(
-      GAME_CONFIG.camera.offset.x,
-      GAME_CONFIG.camera.offset.y,
-      GAME_CONFIG.camera.offset.z,
-    );
-    this.camera.lookAt(0, 0, 0);
+    this.camera = new THREE.PerspectiveCamera(GAME_CONFIG.camera.fov, aspect, 0.5, 130);
+    this.updateAspectFactor(aspect);
 
-    this.hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x7aa2c9, 1.05);
+    // Three-point lighting + subtle icy rim light
+    this.hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x64748b, 0.95);
     this.scene.add(this.hemiLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xfff5e4, 1.55);
-    this.sunLight.position.set(14, 24, 12);
+    // Warm sun key directional light
+    this.sunLight = new THREE.DirectionalLight(0xfff2dc, 1.65);
+    this.sunLight.position.set(16, 26, 14);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.set(1024, 1024);
     this.sunLight.shadow.camera.near = 2;
-    this.sunLight.shadow.camera.far = 65;
+    this.sunLight.shadow.camera.far = 70;
     const shadowBound = 22;
     this.sunLight.shadow.camera.left = -shadowBound;
     this.sunLight.shadow.camera.right = shadowBound;
     this.sunLight.shadow.camera.top = shadowBound;
     this.sunLight.shadow.camera.bottom = -shadowBound;
-    this.sunLight.shadow.bias = -0.0008;
+    this.sunLight.shadow.bias = -0.0006;
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
+    // Cool rim light from opposing quadrant for character/edge separation
+    this.rimLight = new THREE.DirectionalLight(0x93c5fd, 0.55);
+    this.rimLight.position.set(-16, 18, -14);
+    this.rimLight.castShadow = false;
+    this.scene.add(this.rimLight);
+
+    this.buildAtmosphereDome();
     this.buildTerrain();
+    this.footprints = new FootprintSystem(this.scene);
+
     this.handleResize();
     window.addEventListener('resize', this.handleResize);
   }
 
-  private buildTerrain(): void {
-    const size = GAME_CONFIG.world.halfSize * 2.5;
-    const snowGeo = new THREE.PlaneGeometry(size, size, 36, 36);
-    snowGeo.rotateX(-Math.PI / 2);
+  get quality(): GraphicsQuality {
+    return this.currentQuality;
+  }
 
-    // Subtle low-poly snow undulation outside the central outpost clearing
-    const pos = snowGeo.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
+  applyQuality(quality: GraphicsQuality): void {
+    this.currentQuality = quality;
+    if (quality === 'high') {
+      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      this.sunLight.shadow.mapSize.set(1024, 1024);
+      this.footprints.setEnabled(true);
+    } else {
+      this.renderer.shadowMap.type = THREE.BasicShadowMap;
+      this.sunLight.shadow.mapSize.set(512, 512);
+      this.footprints.setEnabled(false);
+    }
+    if (this.sunLight.shadow.map) {
+      this.sunLight.shadow.map.dispose();
+      (this.sunLight.shadow as unknown as { map: null }).map = null;
+    }
+  }
+
+  private updateAspectFactor(aspect: number): void {
+    // Standard baseline portrait aspect ~0.62. On narrower screens (e.g. 390/844 = 0.46),
+    // scale camera distance smoothly so all base unlock pads stay within view.
+    const baseline = 0.62;
+    this.aspectFactor = Math.max(1.0, Math.min(1.42, Math.sqrt(baseline / Math.max(aspect, 0.35))));
+  }
+
+  private buildAtmosphereDome(): void {
+    // Inverted dome for smooth vertical sky gradient behind fog
+    const domeGeo = new THREE.SphereGeometry(75, 24, 16, 0, Math.PI * 2, 0, Math.PI * 0.55);
+    domeGeo.scale(-1, 1, 1); // Face inward
+
+    const count = domeGeo.attributes.position.count;
+    const colors = new Float32Array(count * 3);
+    const horizonColor = new THREE.Color(GAME_CONFIG.world.fogColor);
+    const zenithColor = new THREE.Color(0x507ea8);
+    const col = new THREE.Color();
+
+    const pos = domeGeo.attributes.position;
+    for (let i = 0; i < count; i++) {
+      const y = pos.getY(i);
+      const t = Math.max(0, Math.min(1, y / 55));
+      col.copy(horizonColor).lerp(zenithColor, t * t);
+      colors[i * 3] = col.r;
+      colors[i * 3 + 1] = col.g;
+      colors[i * 3 + 2] = col.b;
+    }
+    domeGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    const domeMat = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      side: THREE.BackSide,
+      fog: false,
+    });
+    const dome = new THREE.Mesh(domeGeo, domeMat);
+    dome.position.y = -2;
+    this.scene.add(dome);
+  }
+
+  private buildTerrain(): void {
+    const size = GAME_CONFIG.world.halfSize * 2.6;
+    const segments = 56;
+    const terrainGeo = new THREE.PlaneGeometry(size, size, segments, segments);
+    terrainGeo.rotateX(-Math.PI / 2);
+
+    const pos = terrainGeo.attributes.position;
+    const count = pos.count;
+    const colors = new Float32Array(count * 3);
+
+    const dirtColor = new THREE.Color(0xb07646);
+    const dirtDark = new THREE.Color(0x8a542b);
+    const snowColor = new THREE.Color(0xf2f7fc);
+    const snowShadow = new THREE.Color(0xd7e6f5);
+    const col = new THREE.Color();
+
+    const baseR = GAME_CONFIG.world.baseRadius;
+
+    for (let i = 0; i < count; i++) {
       const x = pos.getX(i);
       const z = pos.getZ(i);
       const dist = Math.hypot(x, z);
-      if (dist > GAME_CONFIG.world.baseRadius + 1.5) {
-        const wave = Math.sin(x * 0.25) * Math.cos(z * 0.25) * 0.35;
-        const rim = Math.max(0, dist - GAME_CONFIG.world.halfSize) * 0.25;
-        pos.setY(i, wave + rim);
-      }
-    }
-    snowGeo.computeVertexNormals();
 
-    const snowMat = new THREE.MeshToonMaterial({
-      color: GAME_CONFIG.world.snowColor,
+      // Height undulation:
+      // Inside base is leveled packed ground.
+      // Along fence: natural snow mounds.
+      // Outside base: gentle rolling snow drifts.
+      let height = 0;
+      if (dist < baseR - 0.7) {
+        height = 0;
+      } else if (dist <= baseR + 1.2) {
+        // Snow mound along fence line, dipping at entrances
+        const isSouthGate = z > baseR * 0.82 && Math.abs(x) < 2.2;
+        const isNorthGate = z < -baseR * 0.82 && Math.abs(x) < 2.2;
+        const isEastGap = x > baseR * 0.82 && Math.abs(z) < 2.4;
+        if (!isSouthGate && !isNorthGate && !isEastGap) {
+          const moundT = Math.sin(((dist - (baseR - 0.7)) / 1.9) * Math.PI);
+          height = moundT * 0.32;
+        }
+      } else {
+        const drift1 = Math.sin(x * 0.16 + z * 0.14) * 0.38;
+        const drift2 = Math.cos(x * 0.26 - z * 0.22) * 0.24;
+        const rim = Math.max(0, dist - GAME_CONFIG.world.halfSize) * 0.35;
+        height = drift1 + drift2 + rim;
+      }
+      pos.setY(i, height);
+
+      // Vertex color blending:
+      // Inner outpost: warm packed dirt.
+      // Soft transition band at base perimeter: smoothly blends into snow.
+      // South trail: leading out from southern gate.
+      const isSouthTrail = z >= baseR - 1.2 && z <= baseR + 8.5 && Math.abs(x) < 2.1;
+
+      if (dist < baseR - 1.8) {
+        // Center dirt with subtle variation
+        const varT = (Math.sin(x * 1.5) * Math.cos(z * 1.5) + 1) * 0.5;
+        col.copy(dirtColor).lerp(dirtDark, varT * 0.35);
+      } else if (dist <= baseR + 0.4) {
+        // Hermite smoothstep blend from dirt to snow
+        const t = (dist - (baseR - 1.8)) / (baseR + 0.4 - (baseR - 1.8));
+        const smoothT = t * t * (3 - 2 * t);
+        const centerCol = isSouthTrail ? dirtColor : dirtColor;
+        col.copy(centerCol).lerp(snowColor, smoothT);
+      } else if (isSouthTrail) {
+        const trailFade = (z - (baseR + 0.4)) / 8.0;
+        const edgeFade = Math.abs(x) / 2.1;
+        const dirtRatio = Math.max(0, (1 - trailFade) * (1 - edgeFade * 0.8));
+        col.copy(snowColor).lerp(dirtColor, dirtRatio * 0.75);
+      } else {
+        // Snow terrain with height-based subtle shadow tint
+        const shade = Math.max(0, Math.min(1, (height + 0.5) / 1.2));
+        col.copy(snowShadow).lerp(snowColor, shade);
+      }
+
+      colors[i * 3] = col.r;
+      colors[i * 3 + 1] = col.g;
+      colors[i * 3 + 2] = col.b;
+    }
+
+    terrainGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    terrainGeo.computeVertexNormals();
+
+    const terrainMat = new THREE.MeshToonMaterial({
+      vertexColors: true,
     });
-    const ground = new THREE.Mesh(snowGeo, snowMat);
+    const ground = new THREE.Mesh(terrainGeo, terrainMat);
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // Packed warm dirt clearing inside the base perimeter
-    const basePadGeo = new THREE.CylinderGeometry(
-      GAME_CONFIG.world.baseRadius - 0.3,
-      GAME_CONFIG.world.baseRadius,
-      0.08,
-      24,
-    );
-    const basePadMat = new THREE.MeshToonMaterial({
-      color: GAME_CONFIG.world.trailColor,
-    });
-    const basePad = new THREE.Mesh(basePadGeo, basePadMat);
-    basePad.position.y = 0.02;
-    basePad.receiveShadow = true;
-    this.scene.add(basePad);
-
-    // Southern entrance snow path leading from base gate
-    const pathGeo = new THREE.BoxGeometry(3.2, 0.05, 11);
-    const pathMesh = new THREE.Mesh(pathGeo, basePadMat);
-    pathMesh.position.set(0, 0.015, GAME_CONFIG.world.baseRadius + 3.8);
-    pathMesh.receiveShadow = true;
-    this.scene.add(pathMesh);
-
-    // Decorative arctic boulders near outer corners
-    const rockGeo = new THREE.DodecahedronGeometry(1.15, 0);
-    const rockMat = new THREE.MeshToonMaterial({ color: 0x64748b });
+    // Decorative arctic boulders around the wilderness
+    const rockGeo = new THREE.DodecahedronGeometry(1.2, 0);
+    const rockMat = new THREE.MeshToonMaterial({ color: 0x5b6b82 });
     const rockSpots: [number, number, number][] = [
-      [-14, -12, 1.4],
-      [15, -14, 1.2],
-      [-18, 10, 1.5],
-      [17, 13, 1.1],
-      [8.5, 12, 0.85],
-      [-9.5, -6, 0.75],
+      [-14.5, -12.5, 1.45],
+      [15.5, -14.0, 1.3],
+      [-18.2, 10.5, 1.55],
+      [17.5, 13.5, 1.2],
+      [8.8, 12.2, 0.9],
+      [-9.8, -6.5, 0.8],
     ];
     for (const [rx, rz, scale] of rockSpots) {
       const rock = new THREE.Mesh(rockGeo, rockMat);
-      rock.position.set(rx, 0.45 * scale, rz);
-      rock.scale.set(scale * 1.2, scale * 0.75, scale);
+      rock.position.set(rx, 0.48 * scale, rz);
+      rock.scale.set(scale * 1.25, scale * 0.78, scale);
       rock.rotation.set(0.2, rx * 0.5, 0.15);
       rock.castShadow = true;
       rock.receiveShadow = true;
@@ -153,15 +267,16 @@ export class Engine {
     dt: number,
   ): void {
     const zoomScale = 1 + this.extraZoom * 0.055;
+    const aspectMult = this.aspectFactor;
     const lookX = focusPos.x + moveDirX * GAME_CONFIG.camera.lookAhead;
     const lookZ = focusPos.z + moveDirZ * GAME_CONFIG.camera.lookAhead;
 
     this.targetLook.lerp(new THREE.Vector3(lookX, 0.8, lookZ), 1 - Math.exp(-GAME_CONFIG.camera.followLerp * dt));
 
     this.desiredCamPos.set(
-      this.targetLook.x + GAME_CONFIG.camera.offset.x * zoomScale,
-      GAME_CONFIG.camera.offset.y * zoomScale,
-      this.targetLook.z + GAME_CONFIG.camera.offset.z * zoomScale,
+      this.targetLook.x + GAME_CONFIG.camera.offset.x * zoomScale * aspectMult,
+      GAME_CONFIG.camera.offset.y * zoomScale * aspectMult,
+      this.targetLook.z + GAME_CONFIG.camera.offset.z * zoomScale * aspectMult,
     );
 
     if (this.shakeIntensity > 0.002) {
@@ -180,7 +295,7 @@ export class Engine {
     this.camera.lookAt(this.targetLook);
 
     // Keep directional shadow frustum centered near the player
-    this.sunLight.position.set(this.targetLook.x + 14, 24, this.targetLook.z + 12);
+    this.sunLight.position.set(this.targetLook.x + 16, 26, this.targetLook.z + 14);
     this.sunLight.target.position.copy(this.targetLook);
   }
 
@@ -191,7 +306,9 @@ export class Engine {
   readonly handleResize = (): void => {
     const w = Math.max(window.innerWidth, 1);
     const h = Math.max(window.innerHeight, 1);
-    this.camera.aspect = w / h;
+    const aspect = w / h;
+    this.camera.aspect = aspect;
+    this.updateAspectFactor(aspect);
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
   };

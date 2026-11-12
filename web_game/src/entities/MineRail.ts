@@ -34,11 +34,15 @@ export class MineRail {
       true,
     );
 
-    // Build wooden sleepers & steel rails along spline
+    // Build wooden sleepers & steel rails along spline using InstancedMesh
     const sleeperMat = new THREE.MeshToonMaterial({ color: 0x78350f });
     const railMat = new THREE.MeshToonMaterial({ color: 0x94a3b8 });
     const steps = 42;
     const sleeperGeo = new THREE.BoxGeometry(1.15, 0.07, 0.22);
+    const sleeperMesh = new THREE.InstancedMesh(sleeperGeo, sleeperMat, steps);
+    sleeperMesh.castShadow = true;
+    sleeperMesh.receiveShadow = true;
+    const dummy = new THREE.Object3D();
 
     const railPointsL: THREE.Vector3[] = [];
     const railPointsR: THREE.Vector3[] = [];
@@ -51,15 +55,17 @@ export class MineRail {
       const side = new THREE.Vector3().crossVectors(tan, up).normalize();
 
       if (i < steps) {
-        const sleeper = new THREE.Mesh(sleeperGeo, sleeperMat);
-        sleeper.position.copy(pt);
-        sleeper.rotation.y = Math.atan2(tan.x, tan.z);
-        this.group.add(sleeper);
+        dummy.position.copy(pt);
+        dummy.rotation.set(0, Math.atan2(tan.x, tan.z), 0);
+        dummy.updateMatrix();
+        sleeperMesh.setMatrixAt(i, dummy.matrix);
       }
 
       railPointsL.push(pt.clone().addScaledVector(side, -0.35).add(new THREE.Vector3(0, 0.06, 0)));
       railPointsR.push(pt.clone().addScaledVector(side, 0.35).add(new THREE.Vector3(0, 0.06, 0)));
     }
+    sleeperMesh.instanceMatrix.needsUpdate = true;
+    this.group.add(sleeperMesh);
 
     const railCurveL = new THREE.CatmullRomCurve3(railPointsL, true);
     const railCurveR = new THREE.CatmullRomCurve3(railPointsR, true);

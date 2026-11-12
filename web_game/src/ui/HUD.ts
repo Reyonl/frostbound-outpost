@@ -1,4 +1,5 @@
 import type { ResourceType } from '../config/gameConfig';
+import type { GraphicsQuality } from '../core/QualitySettings';
 
 export interface ResourceCounts {
   cash: number;
@@ -17,15 +18,22 @@ export class HUD {
   private readonly stackTextEl: HTMLSpanElement;
   private readonly stackFillEl: HTMLDivElement;
   private readonly muteBtn: HTMLButtonElement;
+  private readonly qualityBtn: HTMLButtonElement;
+  private readonly debugEl?: HTMLDivElement;
   readonly upgradeBtn: HTMLButtonElement;
 
   private readonly prevCounts: ResourceCounts = { cash: -1, wood: -1, meat: -1, gold: -1 };
   private bannerTimer = 0;
+  private fpsFrames = 0;
+  private fpsTimer = 0;
+  private currentFps = 60;
 
   constructor(
     root: HTMLElement,
     onToggleMute: () => boolean,
     onOpenUpgrades: () => void,
+    onToggleQuality: () => GraphicsQuality,
+    initialQuality: GraphicsQuality,
   ) {
     this.root = root;
 
@@ -39,6 +47,7 @@ export class HUD {
     this.statusPillEl.textContent = '🔥 100% · DAY 1 · W1';
     this.root.appendChild(this.statusPillEl);
 
+    // Audio Mute Button
     this.muteBtn = document.createElement('button');
     this.muteBtn.className = 'hud-mute-btn';
     this.muteBtn.type = 'button';
@@ -50,6 +59,28 @@ export class HUD {
       this.muteBtn.textContent = muted ? '🔇' : '🔊';
     });
     this.root.appendChild(this.muteBtn);
+
+    // Graphics Quality Toggle Button
+    this.qualityBtn = document.createElement('button');
+    this.qualityBtn.className = 'hud-quality-btn';
+    this.qualityBtn.type = 'button';
+    this.qualityBtn.textContent = initialQuality === 'high' ? '⚙️ HI' : '⚙️ LO';
+    this.qualityBtn.setAttribute('aria-label', 'Toggle graphics quality');
+    this.qualityBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const next = onToggleQuality();
+      this.qualityBtn.textContent = next === 'high' ? '⚙️ HI' : '⚙️ LO';
+    });
+    this.root.appendChild(this.qualityBtn);
+
+    // Debug Overlay (enabled via ?debug=1)
+    const isDebug = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1';
+    if (isDebug) {
+      this.debugEl = document.createElement('div');
+      this.debugEl.className = 'debug-hud';
+      this.debugEl.textContent = 'FPS: 60 | DC: 0';
+      this.root.appendChild(this.debugEl);
+    }
 
     const panel = document.createElement('div');
     panel.className = 'resource-hud';
@@ -117,6 +148,10 @@ export class HUD {
     this.root.appendChild(stackBar);
   }
 
+  setQualityBadge(quality: GraphicsQuality): void {
+    this.qualityBtn.textContent = quality === 'high' ? '⚙️ HI' : '⚙️ LO';
+  }
+
   showBanner(text: string, duration = 3.2): void {
     this.bannerEl.textContent = text;
     this.bannerEl.classList.remove('hidden');
@@ -133,11 +168,25 @@ export class HUD {
     blizzard: boolean,
     tutorialText: string,
     dt: number,
+    drawCalls = 0,
+    quality: GraphicsQuality = 'high',
   ): void {
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
       if (this.bannerTimer <= 0) {
         this.bannerEl.classList.add('hidden');
+      }
+    }
+
+    // Debug FPS & Draw Calls update
+    if (this.debugEl) {
+      this.fpsFrames++;
+      this.fpsTimer += dt;
+      if (this.fpsTimer >= 0.3) {
+        this.currentFps = Math.round(this.fpsFrames / this.fpsTimer);
+        this.fpsFrames = 0;
+        this.fpsTimer = 0;
+        this.debugEl.textContent = `FPS: ${this.currentFps} | DC: ${drawCalls} | Q: ${quality === 'high' ? 'HI' : 'LO'}`;
       }
     }
 
@@ -153,23 +202,17 @@ export class HUD {
       }
     });
 
-    const pct = Math.min(100, Math.round((carryCount / Math.max(1, maxCarry)) * 100));
-    this.stackFillEl.style.width = `${pct}%`;
-    this.stackFillEl.classList.toggle('full', carryCount >= maxCarry);
-    this.stackTextEl.textContent =
-      carryCount >= maxCarry ? `FULL ${carryCount} / ${maxCarry}` : `PACK ${carryCount} / ${maxCarry}`;
-
     const warmPct = Math.round(warmth);
-    this.statusPillEl.textContent = blizzard
-      ? `❄️ BLIZZARD · 🔥 ${warmPct}%`
-      : `🔥 ${warmPct}% · DAY ${day} · W${wave}`;
-    this.statusPillEl.classList.toggle('cold', warmth < 35 || blizzard);
+    this.statusPillEl.textContent = `${blizzard ? '❄️' : '🔥'} ${warmPct}% · DAY ${day} · W${wave}`;
+    this.statusPillEl.classList.toggle('cold', warmPct < 35 || blizzard);
 
-    if (tutorialText) {
+    if (tutorialText && this.tipEl.textContent !== tutorialText) {
       this.tipEl.textContent = tutorialText;
-      this.tipEl.classList.remove('hidden');
-    } else {
-      this.tipEl.classList.add('hidden');
     }
+
+    this.stackTextEl.textContent = `PACK ${carryCount} / ${maxCarry}`;
+    const fillRatio = Math.min(100, Math.round((carryCount / Math.max(1, maxCarry)) * 100));
+    this.stackFillEl.style.width = `${fillRatio}%`;
+    this.stackFillEl.classList.toggle('full', carryCount >= maxCarry);
   }
 }

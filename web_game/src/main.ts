@@ -2,6 +2,7 @@ import { GAME_CONFIG } from './config/gameConfig';
 import { AudioSynth } from './core/AudioSynth';
 import { Engine } from './core/Engine';
 import { triggerHaptic, unlockHaptics } from './core/Haptics';
+import { QualityManager } from './core/QualitySettings';
 import {
   createDefaultSave,
   loadSaveFromStorage,
@@ -66,6 +67,7 @@ export class FrostboundGame {
   private readonly combat: CombatSystem;
   private readonly hud: HUD;
   private readonly upgradeModal: UpgradeModal;
+  private readonly qualityMgr: QualityManager;
 
   private saveState: SaveState;
   private playerHp = 100;
@@ -79,12 +81,16 @@ export class FrostboundGame {
   private saveTimer = 2.5;
   private nextBossKillThreshold = 8;
   private paused = false;
+  private walkDist = 0;
+  private isRightStep = false;
 
   constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement, joystickZone: HTMLElement) {
     this.saveState = loadSaveFromStorage();
     this.totalCashEarned = this.saveState.totalCashEarned;
 
+    this.qualityMgr = new QualityManager();
     this.engine = new Engine(canvas);
+    this.engine.applyQuality(this.qualityMgr.quality);
     this.audio = new AudioSynth();
     this.input = new InputSystem(joystickZone, () => {
       this.audio.unlock();
@@ -92,6 +98,13 @@ export class FrostboundGame {
     });
     this.environment = new EnvironmentSystem(this.engine.scene);
     this.baseFort = new BaseFort(this.engine.scene);
+    this.baseFort.applyQuality(this.qualityMgr.quality);
+
+    this.qualityMgr.onChange((q) => {
+      this.engine.applyQuality(q);
+      this.baseFort.applyQuality(q);
+      this.hud.setQualityBadge(q);
+    });
 
     this.sawmill = new Station(this.engine.scene, {
       id: 'sawmill',
@@ -144,6 +157,8 @@ export class FrostboundGame {
         this.upgradeModal.setOpen(!this.upgradeModal.isOpen);
         this.refreshUpgradeModal();
       },
+      () => this.qualityMgr.toggle(),
+      this.qualityMgr.quality,
     );
 
     this.applySavedProgress();
@@ -175,6 +190,8 @@ export class FrostboundGame {
         }
         return {
           milestone: 'M6',
+          rendererCalls: this.engine.renderer.info.render.calls,
+          quality: this.qualityMgr.quality,
           elapsed: Number(this.elapsed.toFixed(2)),
           player: {
             x: Number(this.player.position.x.toFixed(2)),
@@ -344,6 +361,23 @@ export class FrostboundGame {
       this.player.update(move, dt);
       this.axeRing.update(dt);
 
+      const moveSpeed = Math.hypot(move.x, move.z);
+      if (moveSpeed > 0.08) {
+        this.walkDist += moveSpeed * dt * GAME_CONFIG.player.moveSpeed;
+        if (this.walkDist >= 0.7) {
+          this.walkDist = 0;
+          this.isRightStep = !this.isRightStep;
+          const yaw = Math.atan2(move.x, move.z);
+          this.engine.footprints.spawnStep(
+            this.player.position.x,
+            this.player.position.z,
+            yaw,
+            this.isRightStep,
+          );
+        }
+      }
+      this.engine.footprints.update(rawDt);
+
       this.combat.updateTreeChopping(
         dt,
         this.axeRing,
@@ -511,6 +545,8 @@ export class FrostboundGame {
         this.environment.blizzardActive,
         this.getTutorialPrompt(),
         rawDt,
+        this.engine.renderer.info.render.calls,
+        this.qualityMgr.quality,
       );
 
       if (this.upgradeModal.isOpen) {
