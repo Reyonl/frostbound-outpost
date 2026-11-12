@@ -205,3 +205,25 @@ body,
   white-space: nowrap;
   will-change: transform, opacity;
 }
+
+.bubble-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.order-bubble {
+  position: fixed;
+  left: 0;
+  top: 0;
+  padding: 4px 9px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 900;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.35);
+  border: 2px solid #38bdf8;
+  white-space: nowrap;
+}

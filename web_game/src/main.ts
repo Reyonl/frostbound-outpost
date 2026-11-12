@@ -4,6 +4,7 @@ import { Engine } from './core/Engine';
 import { unlockHaptics } from './core/Haptics';
 import { AxeRing } from './entities/AxeRing';
 import { BaseFort } from './entities/BaseFort';
+import { CustomerQueue } from './entities/CustomerQueue';
 import { EnemyManager } from './entities/EnemyManager';
 import { MineRail } from './entities/MineRail';
 import { Player } from './entities/Player';
@@ -16,6 +17,7 @@ import { FloatingTextSystem } from './systems/FloatingTextSystem';
 import { InputSystem } from './systems/InputSystem';
 import { ParticleSystem } from './systems/ParticleSystem';
 import { StackSystem } from './systems/StackSystem';
+import { UnlockSystem } from './systems/UnlockSystem';
 import { HUD, type ResourceCounts } from './ui/HUD';
 
 declare global {
@@ -35,6 +37,8 @@ export class FrostboundGame {
   private readonly sawmill: Station;
   private readonly smokehouse: Station;
   private readonly mineRail: MineRail;
+  private readonly customerQueue: CustomerQueue;
+  private readonly unlockSystem: UnlockSystem;
   private readonly player: Player;
   private readonly axeRing: AxeRing;
   private readonly trees: TreeCluster;
@@ -46,7 +50,7 @@ export class FrostboundGame {
   private readonly combat: CombatSystem;
   private readonly hud: HUD;
 
-  private readonly baseCounts: ResourceCounts = { cash: 0, wood: 0, meat: 0, gold: 0 };
+  private readonly baseCounts: ResourceCounts = { cash: 20, wood: 0, meat: 0, gold: 0 };
   private playerHp = 100;
   private playerMaxHp = 100;
 
@@ -86,6 +90,8 @@ export class FrostboundGame {
     });
 
     this.mineRail = new MineRail(this.engine.scene);
+    this.customerQueue = new CustomerQueue(this.engine.scene, hudRoot);
+    this.unlockSystem = new UnlockSystem(this.engine.scene);
     this.player = new Player(this.engine.scene);
     this.axeRing = new AxeRing(this.player.group);
     this.trees = new TreeCluster(this.engine.scene);
@@ -125,7 +131,7 @@ export class FrostboundGame {
           }
         }
         return {
-          milestone: 'M4',
+          milestone: 'M5',
           elapsed: Number(this.elapsed.toFixed(2)),
           player: {
             x: Number(this.player.position.x.toFixed(2)),
@@ -139,6 +145,8 @@ export class FrostboundGame {
             processed: this.sawmill.processedCount,
           },
           goldDelivered: this.mineRail.goldDelivered,
+          ordersCompleted: this.customerQueue.ordersCompleted,
+          unlockedPads: this.unlockSystem.getUnlockedIds(),
           enemyCount: this.enemyMgr.enemies.length,
           kills: this.enemyMgr.kills,
           stackCount: this.stack.count,
@@ -202,7 +210,6 @@ export class FrostboundGame {
           this.playerHp = Math.max(0, this.playerHp - dmg);
           this.floatingText.spawn(this.player.position.x, 2.0, this.player.position.z, `-${Math.round(dmg)}`, '#ef4444', 1.0);
           if (this.playerHp <= 0) {
-            // Respawn safely inside base campfire without losing upgrades
             this.player.position.set(0, 0, 1.5);
             this.playerHp = this.playerMaxHp;
           }
@@ -234,7 +241,6 @@ export class FrostboundGame {
         },
       );
 
-      // Heal player & slowly mend gate inside campfire safety aura
       if (Math.hypot(this.player.position.x, this.player.position.z) < 4.5) {
         this.playerHp = Math.min(this.playerMaxHp, this.playerHp + dt * 14);
         this.baseFort.repairGate(dt * 4);
@@ -251,12 +257,43 @@ export class FrostboundGame {
         this.baseCounts.gold += amt;
       });
 
+      this.unlockSystem.update(
+        dt,
+        this.player.position,
+        () => this.baseCounts.cash,
+        (amt) => {
+          this.baseCounts.cash -= amt;
+        },
+        this.particles,
+        this.floatingText,
+        this.audio,
+        (id) => {
+          if (id === 'turret_ne' || id === 'turret_sw') {
+            this.turretMgr.unlockTurret(id);
+          } else if (id === 'fence_up') {
+            this.baseFort.upgradeFence();
+          } else if (id === 'rail_turbo') {
+            this.mineRail.speedMultiplier = 1.85;
+          }
+        },
+      );
+
       this.stack.update(dt, this.player.position);
       this.particles.update(dt);
       this.environment.update(dt, this.player.position.x, this.player.position.z);
 
       this.engine.setStackZoom(this.stack.count);
       this.engine.updateCamera(this.player.position, move.x, move.z, rawDt);
+      this.customerQueue.update(
+        dt,
+        this.player.position,
+        this.engine.camera,
+        this.stack,
+        this.baseCounts,
+        this.particles,
+        this.floatingText,
+        this.audio,
+      );
       this.floatingText.update(rawDt, this.engine.camera);
       this.engine.render();
 
