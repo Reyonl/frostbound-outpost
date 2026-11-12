@@ -160,6 +160,16 @@ def run_qa(milestone: str, dist_dir: Path, evidence_dir: Path) -> dict[str, Any]
 
         driver.save_screenshot(str(screenshot_path))
 
+        if milestone == "m6":
+            upg_btn = driver.find_element(By.CSS_SELECTOR, "[data-testid='open-upgrades']")
+            upg_btn.click()
+            WebDriverWait(driver, 5).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, ".upgrade-sheet"))
+            )
+            driver.save_screenshot(str(evidence_dir / "m6_upgrades.png"))
+            close_btn = driver.find_element(By.CSS_SELECTOR, ".upgrade-close-btn")
+            close_btn.click()
+
         logs = driver.get_log("browser")
         for entry in logs:
             if entry.get("level") == "SEVERE":
