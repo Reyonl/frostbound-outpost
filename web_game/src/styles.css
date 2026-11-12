@@ -74,14 +74,117 @@ body,
   position: fixed;
   top: max(12px, env(safe-area-inset-top));
   left: 12px;
-  padding: 6px 12px;
+  padding: 6px 11px;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.68);
+  background: rgba(15, 23, 42, 0.72);
   backdrop-filter: blur(8px);
   border: 1.5px solid rgba(125, 211, 252, 0.45);
   color: #f8fafc;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.6px;
   box-shadow: 0 4px 14px rgba(15, 23, 42, 0.25);
+}
+
+.hud-mute-btn {
+  position: fixed;
+  top: max(46px, calc(env(safe-area-inset-top) + 34px));
+  left: 12px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(125, 211, 252, 0.4);
+  background: rgba(15, 23, 42, 0.72);
+  color: #f8fafc;
+  font-size: 15px;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.resource-hud {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.res-pill {
+  min-width: 88px;
+  padding: 5px 10px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.78);
+  backdrop-filter: blur(8px);
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #f8fafc;
+  font-weight: 800;
+  font-size: 14px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.26);
+  transform-origin: right center;
+}
+
+.res-pill.pop {
+  animation: hudPop 0.24s cubic-bezier(0.22, 1.4, 0.36, 1);
+}
+
+.res-cash .res-icon {
+  color: #4ade80;
+  font-weight: 900;
+}
+
+@keyframes hudPop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.stack-bar {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 146px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.76);
+  border: 1.5px solid rgba(148, 163, 184, 0.45);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stack-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0%;
+  background: linear-gradient(90deg, #0ea5e9, #38bdf8);
+  transition: width 0.14s ease;
+}
+
+.stack-bar-fill.full {
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
+}
+
+.stack-bar-text {
+  position: relative;
+  z-index: 1;
+  color: #f8fafc;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
 }

@@ -1,9 +1,9 @@
 """Automated Browser QA runner (Selenium WebDriver) for Frostbound Outpost.
 
-Runs the built web_game/dist/ bundle (or dev server) in headless Chrome/Edge
-at a 390x844 mobile portrait viewport with touch emulation, checks console/JS
-errors, performs touch-drag virtual joystick gestures, validates milestone hooks
-exposed on window.__frostboundDebug, and outputs a JSON QA report + screenshots.
+Runs the built web_game/dist/ bundle in headless Chrome at a 390x844 mobile
+portrait viewport with touch emulation, checks console/JS errors, performs
+touch-drag virtual joystick gestures, validates milestone state assertions on
+window.__frostboundDebug, and outputs a JSON QA report + screenshots.
 """
 
 from __future__ import annotations
@@ -12,10 +12,9 @@ import argparse
 import functools
 import http.server
 import json
-import os
+import math
 import socketserver
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -63,11 +62,10 @@ def create_mobile_driver() -> webdriver.Chrome:
         },
     )
     opts.set_capability("goog:loggingPrefs", {"browser": "ALL"})
-    driver = webdriver.Chrome(options=opts)
-    return driver
+    return webdriver.Chrome(options=opts)
 
 
-def touch_drag(driver: webdriver.Chrome, start_x: int, start_y: int, dx: int, dy: int, hold_sec: float = 0.6) -> None:
+def touch_drag(driver: webdriver.Chrome, start_x: int, start_y: int, dx: int, dy: int, hold_sec: float = 0.8) -> None:
     touch = PointerInput("touch", "finger")
     actions = ActionBuilder(driver, mouse=touch)
     actions.pointer_action.move_to_location(start_x, start_y)
@@ -82,6 +80,18 @@ def touch_drag(driver: webdriver.Chrome, start_x: int, start_y: int, dx: int, dy
     actions.pointer_action.pause(hold_sec)
     actions.pointer_action.pointer_up()
     actions.perform()
+
+
+def steer_toward(driver: webdriver.Chrome, target_x: float, target_z: float, hold_sec: float = 1.8) -> None:
+    state = driver.execute_script("return window.__frostboundDebug.getState();")
+    px = state["player"]["x"]
+    pz = state["player"]["z"]
+    vx = target_x - px
+    vz = target_z - pz
+    mag = math.hypot(vx, vz) or 1.0
+    dx = int((vx / mag) * 58)
+    dy = int((vz / mag) * 58)
+    touch_drag(driver, 195, 670, dx, dy, hold_sec=hold_sec)
 
 
 def run_qa(milestone: str, dist_dir: Path, evidence_dir: Path) -> dict[str, Any]:
@@ -100,21 +110,26 @@ def run_qa(milestone: str, dist_dir: Path, evidence_dir: Path) -> dict[str, Any]
         WebDriverWait(driver, 15).until(
             EC.visibility_of_element_located((By.ID, "game-canvas"))
         )
-
-        # Wait until game attaches debug state or HUD renders
         WebDriverWait(driver, 15).until(
             lambda d: d.execute_script(
-                "return Boolean(document.getElementById('game-canvas') && document.getElementById('game-canvas').width > 0);"
+                "const c = document.getElementById('game-canvas'); return Boolean(c && c.width > 0);"
             )
         )
 
-        # Collect initial state if milestone exposes __frostboundDebug
-        has_debug = driver.execute_script("return Boolean(window.__frostboundDebug);")
+        has_debug = bool(driver.execute_script("return Boolean(window.__frostboundDebug);"))
         before_state = driver.execute_script("return window.__frostboundDebug?.getState?.() ?? null;")
 
         if has_debug:
-            # Test virtual joystick touch drag toward forest (up-right)
-            touch_drag(driver, 195, 670, 55, -55, hold_sec=0.8)
+            if milestone == "m1":
+                touch_drag(driver, 195, 670, 52, -48, hold_sec=0.9)
+            else:
+                for _ in range(4):
+                    st = driver.execute_script("return window.__frostboundDebug.getState();")
+                    if st.get("counts", {}).get("wood", 0) >= 3:
+                        break
+                    tree = st.get("nearestTree") or {"x": 8.0, "z": -8.0}
+                    steer_toward(driver, tree["x"], tree["z"], hold_sec=1.5)
+
             WebDriverWait(driver, 10).until(
                 lambda d: (d.execute_script("return window.__frostboundDebug.getState().elapsed;") or 0) > 0.5
             )
@@ -136,15 +151,27 @@ def run_qa(milestone: str, dist_dir: Path, evidence_dir: Path) -> dict[str, Any]
 
         logs = driver.get_log("browser")
         for entry in logs:
-            if entry.get("level") in ("SEVERE",):
+            if entry.get("level") == "SEVERE":
                 console_errors.append(entry.get("message", str(entry)))
 
         passed = len(console_errors) == 0 and dom_summary["canvas"] is not None
-        if milestone != "m0" and has_debug and before_state and after_state:
-            dx = after_state["player"]["x"] - before_state["player"]["x"]
-            dz = after_state["player"]["z"] - before_state["player"]["z"]
-            moved = (dx * dx + dz * dz) > 0.1
-            passed = passed and moved
+        failure_reasons: list[str] = []
+
+        if milestone != "m0":
+            if not (has_debug and before_state and after_state):
+                passed = False
+                failure_reasons.append("Missing window.__frostboundDebug state")
+            else:
+                dx = after_state["player"]["x"] - before_state["player"]["x"]
+                dz = after_state["player"]["z"] - before_state["player"]["z"]
+                if (dx * dx + dz * dz) <= 0.1:
+                    passed = False
+                    failure_reasons.append("Player did not move after joystick touch drag")
+
+                if milestone in ("m2", "m3", "m4", "m5", "m6"):
+                    if after_state.get("counts", {}).get("wood", 0) <= 0:
+                        passed = False
+                        failure_reasons.append("Wood count remained 0 after chopping forest sweep")
 
         return {
             "status": "PASS" if passed else "FAIL",
@@ -155,7 +182,7 @@ def run_qa(milestone: str, dist_dir: Path, evidence_dir: Path) -> dict[str, Any]
                 "Perform virtual joystick touch-drag gesture" if has_debug else "Verify bootstrap DOM",
                 "Capture screenshot and inspect browser console logs",
             ],
-            "expected_result": "Zero SEVERE console errors, valid 390x844 canvas, responsive movement",
+            "expected_result": "Zero SEVERE console errors, valid 390x844 canvas, responsive movement and milestone state",
             "actual_result": {
                 "before": before_state,
                 "after": after_state,
@@ -167,7 +194,7 @@ def run_qa(milestone: str, dist_dir: Path, evidence_dir: Path) -> dict[str, Any]
                 "network_errors": [],
                 "dom_state": dom_summary,
             },
-            "root_cause": None if passed else "Console error or movement assertion failed",
+            "root_cause": "; ".join(failure_reasons) if failure_reasons else None,
             "recommendation": "Proceed to next milestone" if passed else "Inspect console_errors and game state",
         }
     finally:

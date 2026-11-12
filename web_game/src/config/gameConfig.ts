@@ -9,12 +9,12 @@ export const GAME_CONFIG = {
     fogDensity: 0.015,
   },
   camera: {
-    fov: 42,
-    offset: { x: 0, y: 17.5, z: 13.5 },
+    fov: 48,
+    offset: { x: 0, y: 20.5, z: 15.8 },
     followLerp: 8.5,
-    lookAhead: 1.6,
-    zoomPerStackItem: 0.14,
-    maxExtraZoom: 5.5,
+    lookAhead: 1.5,
+    zoomPerStackItem: 0.16,
+    maxExtraZoom: 6.0,
   },
   player: {
     moveSpeed: 7.4,
@@ -33,10 +33,10 @@ export const GAME_CONFIG = {
   axe: {
     baseCount: 2,
     orbitRadius: 2.15,
-    spinSpeed: 5.0,
-    baseDamage: 18,
-    chopCooldown: 0.26,
-    hitRadius: 0.72,
+    spinSpeed: 5.5,
+    baseDamage: 24,
+    chopCooldown: 0.25,
+    hitRadius: 0.78,
   },
   forest: {
     treeCount: 74,
