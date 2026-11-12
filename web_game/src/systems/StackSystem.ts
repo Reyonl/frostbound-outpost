@@ -54,12 +54,12 @@ export class StackSystem {
 
   constructor(scene: THREE.Scene, playerGroup: THREE.Group) {
     this.scene = scene;
-    this.stackGroup.position.set(0, 0.92, -0.38);
+    this.stackGroup.position.set(0, 1.08, -0.46);
     playerGroup.add(this.stackGroup);
     this.prevPlayerX = playerGroup.position.x;
     this.prevPlayerZ = playerGroup.position.z;
 
-    const itemGeo = new THREE.BoxGeometry(0.48, 0.14, 0.24);
+    const itemGeo = new THREE.BoxGeometry(0.56, 0.16, 0.28);
     for (let i = 0; i < MAX_STACK_VISUALS; i++) {
       const mat = new THREE.MeshToonMaterial({ color: STACK_COLORS.wood });
       const mesh = new THREE.Mesh(itemGeo, mat);

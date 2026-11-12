@@ -1,7 +1,11 @@
+import { GAME_CONFIG } from './config/gameConfig';
 import { AudioSynth } from './core/AudioSynth';
 import { Engine } from './core/Engine';
 import { AxeRing } from './entities/AxeRing';
+import { BaseFort } from './entities/BaseFort';
+import { MineRail } from './entities/MineRail';
 import { Player } from './entities/Player';
+import { Station } from './entities/Station';
 import { TreeCluster } from './entities/TreeCluster';
 import { CombatSystem } from './systems/CombatSystem';
 import { EnvironmentSystem } from './systems/EnvironmentSystem';
@@ -23,6 +27,10 @@ export class FrostboundGame {
   private readonly audio: AudioSynth;
   private readonly input: InputSystem;
   private readonly environment: EnvironmentSystem;
+  private readonly baseFort: BaseFort;
+  private readonly sawmill: Station;
+  private readonly smokehouse: Station;
+  private readonly mineRail: MineRail;
   private readonly player: Player;
   private readonly axeRing: AxeRing;
   private readonly trees: TreeCluster;
@@ -31,7 +39,7 @@ export class FrostboundGame {
   private readonly combat: CombatSystem;
   private readonly hud: HUD;
 
-  private readonly counts: ResourceCounts = { cash: 0, wood: 0, meat: 0, gold: 0 };
+  private readonly baseCounts: ResourceCounts = { cash: 0, wood: 0, meat: 0, gold: 0 };
 
   private rafId = 0;
   private lastTime = 0;
@@ -43,6 +51,29 @@ export class FrostboundGame {
     this.audio = new AudioSynth();
     this.input = new InputSystem(joystickZone, () => this.audio.unlock());
     this.environment = new EnvironmentSystem(this.engine.scene);
+    this.baseFort = new BaseFort(this.engine.scene);
+
+    this.sawmill = new Station(this.engine.scene, {
+      id: 'sawmill',
+      label: 'SAWMILL',
+      inputType: 'wood',
+      position: { x: -3.6, z: -1.6 },
+      dropOffset: { x: 0, z: 2.0 },
+      accentColor: 0x0284c7,
+      processDuration: GAME_CONFIG.stations.sawmillTime,
+    });
+
+    this.smokehouse = new Station(this.engine.scene, {
+      id: 'smokehouse',
+      label: 'BUTCHER',
+      inputType: 'meat',
+      position: { x: 3.6, z: -1.8 },
+      dropOffset: { x: 0, z: 2.0 },
+      accentColor: 0xdc2626,
+      processDuration: GAME_CONFIG.stations.smokehouseTime,
+    });
+
+    this.mineRail = new MineRail(this.engine.scene);
     this.player = new Player(this.engine.scene);
     this.axeRing = new AxeRing(this.player.group);
     this.trees = new TreeCluster(this.engine.scene);
@@ -79,19 +110,25 @@ export class FrostboundGame {
           }
         }
         return {
-          milestone: 'M2',
+          milestone: 'M3',
           elapsed: Number(this.elapsed.toFixed(2)),
           player: {
             x: Number(this.player.position.x.toFixed(2)),
             z: Number(this.player.position.z.toFixed(2)),
           },
           nearestTree,
+          sawmillDrop: {
+            x: this.sawmill.dropWorldPos.x,
+            z: this.sawmill.dropWorldPos.z,
+            processed: this.sawmill.processedCount,
+          },
+          goldDelivered: this.mineRail.goldDelivered,
           stackCount: this.stack.count,
           counts: {
-            cash: this.counts.cash,
-            wood: this.counts.wood + this.stack.countOf('wood'),
-            meat: this.counts.meat + this.stack.countOf('meat'),
-            gold: this.counts.gold + this.stack.countOf('gold'),
+            cash: this.baseCounts.cash,
+            wood: this.baseCounts.wood + this.stack.countOf('wood'),
+            meat: this.baseCounts.meat + this.stack.countOf('meat'),
+            gold: this.baseCounts.gold + this.stack.countOf('gold'),
           },
           treeCount: this.trees.trees.length,
           drawCalls: this.engine.renderer.info.render.calls,
@@ -125,6 +162,18 @@ export class FrostboundGame {
         this.engine,
       );
       this.trees.update(dt);
+
+      this.baseFort.update(dt);
+      this.sawmill.update(dt, this.player.position, this.stack, this.audio, (_k, amt) => {
+        this.baseCounts.wood += amt;
+      });
+      this.smokehouse.update(dt, this.player.position, this.stack, this.audio, (_k, amt) => {
+        this.baseCounts.meat += amt;
+      });
+      this.mineRail.update(dt, this.particles, (amt) => {
+        this.baseCounts.gold += amt;
+      });
+
       this.stack.update(dt, this.player.position);
       this.particles.update(dt);
       this.environment.update(dt, this.player.position.x, this.player.position.z);
@@ -135,10 +184,10 @@ export class FrostboundGame {
 
       this.hud.update(
         {
-          cash: this.counts.cash,
-          wood: this.counts.wood + this.stack.countOf('wood'),
-          meat: this.counts.meat + this.stack.countOf('meat'),
-          gold: this.counts.gold + this.stack.countOf('gold'),
+          cash: this.baseCounts.cash,
+          wood: this.baseCounts.wood + this.stack.countOf('wood'),
+          meat: this.baseCounts.meat + this.stack.countOf('meat'),
+          gold: this.baseCounts.gold + this.stack.countOf('gold'),
         },
         this.stack.count,
         this.stack.maxCapacity,
