@@ -42,8 +42,10 @@ export class CombatSystem {
     const ex = enemy.group.position.x;
     const ez = enemy.group.position.z;
 
-    particles.burst(ex, 0.9, ez, 0xef4444, 14, 5.4, 1.05);
-    particles.burst(ex, 1.1, ez, 0xf8fafc, 8, 4.2, 0.85);
+    // Fluffy white snow/cloud death puff burst
+    particles.burst(ex, 0.85, ez, 0xffffff, 20, 3.8, 1.15);
+    particles.burst(ex, 1.05, ez, 0xe2e8f0, 12, 4.6, 0.9);
+    particles.burst(ex, 0.75, ez, 0xef4444, 8, 4.2, 0.75);
     floatingText.spawn(ex, 2.1, ez, `+${enemy.meatYield} MEAT`, '#fca5a5', 1.1);
 
     engine.addShake(enemy.kind === 'boss' ? 0.36 : 0.18);

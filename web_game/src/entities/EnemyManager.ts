@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GAME_CONFIG } from '../config/gameConfig';
 import type { GraphicsQuality } from '../core/QualitySettings';
 
@@ -10,6 +11,15 @@ export interface Enemy {
   group: THREE.Group;
   hpBarFill: THREE.Mesh;
   telegraphRing?: THREE.Mesh;
+  frontLeftLeg: THREE.Mesh;
+  frontRightLeg: THREE.Mesh;
+  backLeftLeg: THREE.Mesh;
+  backRightLeg: THREE.Mesh;
+  headMesh: THREE.Mesh;
+  tailMesh?: THREE.Mesh;
+  outlineMesh?: THREE.Mesh;
+  originalCoatHex: number;
+  walkPhase: number;
   hp: number;
   maxHp: number;
   speed: number;
@@ -38,7 +48,7 @@ export class EnemyManager {
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
-    // Seed 3 initial bears just north/east outside base so action is immediately visible
+    // Seed 3 initial enemies outside fort gates
     this.spawnEnemy('bear', -3.5, -11.5);
     this.spawnEnemy('bear', 4.5, -12.0);
     this.spawnEnemy('wolf', 10.5, 4.0);
@@ -48,6 +58,9 @@ export class EnemyManager {
     this.currentQuality = quality;
     const isHigh = quality === 'high';
     for (const e of this.enemies) {
+      if (e.outlineMesh) {
+        e.outlineMesh.visible = isHigh;
+      }
       e.group.traverse((obj) => {
         if (obj.name === 'enemy_detail') {
           obj.visible = isHigh;
@@ -63,6 +76,14 @@ export class EnemyManager {
     group: THREE.Group;
     hpBarFill: THREE.Mesh;
     telegraphRing?: THREE.Mesh;
+    frontLeftLeg: THREE.Mesh;
+    frontRightLeg: THREE.Mesh;
+    backLeftLeg: THREE.Mesh;
+    backRightLeg: THREE.Mesh;
+    headMesh: THREE.Mesh;
+    tailMesh?: THREE.Mesh;
+    outlineMesh?: THREE.Mesh;
+    originalCoatHex: number;
   } {
     const group = new THREE.Group();
     group.name = 'characters';
@@ -71,51 +92,172 @@ export class EnemyManager {
     const isBoss = kind === 'boss';
 
     const scale = isBoss ? 1.85 : isElite ? 1.32 : isWolf ? 0.82 : 1.0;
-    const coatHex = isBoss ? 0xf1f5f9 : isElite ? 0xe2e8f0 : isWolf ? 0x94a3b8 : 0xf8fafc;
+    // Distinct coloration: Bears ivory/off-white, Wolves dark slate/charcoal
+    const coatHex = isBoss ? 0xf8fafc : isElite ? 0xe2e8f0 : isWolf ? 0x334155 : 0xf1f5f9;
     const coatMat = new THREE.MeshToonMaterial({ color: coatHex });
-    const darkMat = new THREE.MeshToonMaterial({ color: 0x1e293b });
+    const darkMat = new THREE.MeshToonMaterial({ color: 0x0f172a });
 
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.78, 1.45), coatMat);
-    body.position.y = 0.62;
-    body.castShadow = true;
-    group.add(body);
+    let frontLeftLeg: THREE.Mesh;
+    let frontRightLeg: THREE.Mesh;
+    let backLeftLeg: THREE.Mesh;
+    let backRightLeg: THREE.Mesh;
+    let headMesh: THREE.Mesh;
+    let tailMesh: THREE.Mesh | undefined;
+    let outlineMesh: THREE.Mesh | undefined;
 
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.56, 0.62), coatMat);
-    head.position.set(0, 0.82, 0.82);
-    head.castShadow = true;
-    group.add(head);
+    const outlineMat = new THREE.MeshBasicMaterial({
+      color: 0x090d16,
+      side: THREE.BackSide,
+    });
 
-    const snout = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.24, 0.28), darkMat);
-    snout.name = 'enemy_detail';
-    snout.position.set(0, 0.72, 1.16);
-    snout.visible = this.currentQuality === 'high';
-    group.add(snout);
+    if (isWolf) {
+      // Sleek low predator body
+      const bodyGeo = new THREE.BoxGeometry(0.52, 0.44, 1.25);
+      const body = new THREE.Mesh(bodyGeo, coatMat);
+      body.position.y = 0.48;
+      body.castShadow = true;
+      group.add(body);
 
-    // Ears or horns for elite/boss
-    const earMat = isElite || isBoss ? new THREE.MeshToonMaterial({ color: 0xdc2626 }) : coatMat;
-    const earGeo = isElite || isBoss ? new THREE.ConeGeometry(0.12, 0.42, 5) : new THREE.BoxGeometry(0.16, 0.16, 0.12);
-    for (const sx of [-0.24, 0.24]) {
-      const ear = new THREE.Mesh(earGeo, earMat);
-      ear.name = 'enemy_detail';
-      ear.position.set(sx, 1.15, 0.76);
-      ear.visible = this.currentQuality === 'high';
-      group.add(ear);
-    }
+      outlineMesh = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.5, 1.31), outlineMat);
+      outlineMesh.position.y = 0.48;
+      outlineMesh.visible = this.currentQuality === 'high';
+      group.add(outlineMesh);
 
-    // 4 stubby legs
-    const legGeo = new THREE.BoxGeometry(0.24, 0.4, 0.24);
-    for (const [lx, lz] of [
-      [-0.32, 0.46],
-      [0.32, 0.46],
-      [-0.32, -0.46],
-      [0.32, -0.46],
-    ]) {
-      const leg = new THREE.Mesh(legGeo, coatMat);
-      leg.name = 'enemy_detail';
-      leg.position.set(lx, 0.2, lz);
-      leg.castShadow = true;
-      leg.visible = this.currentQuality === 'high';
-      group.add(leg);
+      // Lowered stalk head
+      const headGeo = new THREE.BoxGeometry(0.38, 0.34, 0.48);
+      headMesh = new THREE.Mesh(headGeo, coatMat);
+      headMesh.position.set(0, 0.62, 0.72);
+      headMesh.castShadow = true;
+      group.add(headMesh);
+
+      // Long predator muzzle
+      const snout = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.18, 0.38), darkMat);
+      snout.name = 'enemy_detail';
+      snout.position.set(0, -0.06, 0.36);
+      snout.visible = this.currentQuality === 'high';
+      headMesh.add(snout);
+
+      // Pointed alert wolf ears merged into 1 mesh
+      const earL = new THREE.ConeGeometry(0.09, 0.24, 4);
+      earL.rotateX(-0.25);
+      earL.translate(-0.14, 0.22, -0.05);
+      const earR = new THREE.ConeGeometry(0.09, 0.24, 4);
+      earR.rotateX(-0.25);
+      earR.translate(0.14, 0.22, -0.05);
+      const wolfEarsGeo = mergeGeometries([earL, earR]) || earL;
+      const wolfEarsMesh = new THREE.Mesh(wolfEarsGeo, darkMat);
+      wolfEarsMesh.name = 'enemy_detail';
+      wolfEarsMesh.visible = this.currentQuality === 'high';
+      headMesh.add(wolfEarsMesh);
+
+      // Bushy tail with pivot at base
+      const tailGeo = new THREE.CylinderGeometry(0.06, 0.13, 0.62, 5);
+      tailGeo.translate(0, -0.28, 0); // pivot at root
+      tailMesh = new THREE.Mesh(tailGeo, coatMat);
+      tailMesh.position.set(0, 0.54, -0.6);
+      tailMesh.rotation.x = Math.PI * 0.24;
+      group.add(tailMesh);
+
+      // 4 articulated stalk legs
+      const legGeo = new THREE.BoxGeometry(0.14, 0.42, 0.16);
+      legGeo.translate(0, -0.19, 0); // pivot at hip/shoulder
+
+      frontLeftLeg = new THREE.Mesh(legGeo, darkMat);
+      frontLeftLeg.name = 'enemy_detail';
+      frontLeftLeg.position.set(-0.22, 0.42, 0.45);
+      frontLeftLeg.visible = this.currentQuality === 'high';
+      group.add(frontLeftLeg);
+
+      frontRightLeg = new THREE.Mesh(legGeo, darkMat);
+      frontRightLeg.name = 'enemy_detail';
+      frontRightLeg.position.set(0.22, 0.42, 0.45);
+      frontRightLeg.visible = this.currentQuality === 'high';
+      group.add(frontRightLeg);
+
+      backLeftLeg = new THREE.Mesh(legGeo, darkMat);
+      backLeftLeg.name = 'enemy_detail';
+      backLeftLeg.position.set(-0.22, 0.42, -0.45);
+      backLeftLeg.visible = this.currentQuality === 'high';
+      group.add(backLeftLeg);
+
+      backRightLeg = new THREE.Mesh(legGeo, darkMat);
+      backRightLeg.name = 'enemy_detail';
+      backRightLeg.position.set(0.22, 0.42, -0.45);
+      backRightLeg.visible = this.currentQuality === 'high';
+      group.add(backRightLeg);
+    } else {
+      // Polar Bear (heavy torso + shoulder hump merged into 1 geometry)
+      const bodyBase = new THREE.BoxGeometry(0.96, 0.82, 1.48);
+      bodyBase.translate(0, 0.68, 0);
+      const humpGeo = new THREE.BoxGeometry(0.82, 0.28, 0.58);
+      humpGeo.translate(0, 1.05, 0.22);
+      const bearBodyMerged = mergeGeometries([bodyBase, humpGeo]) || bodyBase;
+      const body = new THREE.Mesh(bearBodyMerged, coatMat);
+      body.castShadow = true;
+      group.add(body);
+
+      outlineMesh = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.88, 1.54), outlineMat);
+      outlineMesh.position.y = 0.68;
+      outlineMesh.visible = this.currentQuality === 'high';
+      group.add(outlineMesh);
+
+      // Heavy bear head with neck pivot
+      const headGeo = new THREE.BoxGeometry(0.64, 0.56, 0.68);
+      headMesh = new THREE.Mesh(headGeo, coatMat);
+      headMesh.position.set(0, 0.86, 0.84);
+      headMesh.castShadow = true;
+      group.add(headMesh);
+
+      // Dark snout with black nose tip
+      const snout = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.26, 0.34), darkMat);
+      snout.name = 'enemy_detail';
+      snout.position.set(0, -0.08, 0.42);
+      snout.visible = this.currentQuality === 'high';
+      headMesh.add(snout);
+
+      // Rounded bear ears merged into 1 mesh
+      const earMat = isElite || isBoss ? new THREE.MeshToonMaterial({ color: 0xdc2626 }) : coatMat;
+      const earGeoL = isElite || isBoss ? new THREE.ConeGeometry(0.12, 0.42, 5) : new THREE.SphereGeometry(0.13, 6, 6);
+      earGeoL.translate(-0.26, 0.32, -0.06);
+      const earGeoR = isElite || isBoss ? new THREE.ConeGeometry(0.12, 0.42, 5) : new THREE.SphereGeometry(0.13, 6, 6);
+      earGeoR.translate(0.26, 0.32, -0.06);
+      const bearEarsGeo = mergeGeometries([earGeoL, earGeoR]) || earGeoL;
+      const earsMesh = new THREE.Mesh(bearEarsGeo, earMat);
+      earsMesh.name = 'enemy_detail';
+      earsMesh.visible = this.currentQuality === 'high';
+      headMesh.add(earsMesh);
+
+      // 4 heavy articulated bear paws/legs
+      const legGeo = new THREE.BoxGeometry(0.26, 0.46, 0.28);
+      legGeo.translate(0, -0.21, 0); // pivot at hip/shoulder
+
+      frontLeftLeg = new THREE.Mesh(legGeo, coatMat);
+      frontLeftLeg.name = 'enemy_detail';
+      frontLeftLeg.position.set(-0.35, 0.48, 0.48);
+      frontLeftLeg.castShadow = true;
+      frontLeftLeg.visible = this.currentQuality === 'high';
+      group.add(frontLeftLeg);
+
+      frontRightLeg = new THREE.Mesh(legGeo, coatMat);
+      frontRightLeg.name = 'enemy_detail';
+      frontRightLeg.position.set(0.35, 0.48, 0.48);
+      frontRightLeg.castShadow = true;
+      frontRightLeg.visible = this.currentQuality === 'high';
+      group.add(frontRightLeg);
+
+      backLeftLeg = new THREE.Mesh(legGeo, coatMat);
+      backLeftLeg.name = 'enemy_detail';
+      backLeftLeg.position.set(-0.35, 0.48, -0.48);
+      backLeftLeg.castShadow = true;
+      backLeftLeg.visible = this.currentQuality === 'high';
+      group.add(backLeftLeg);
+
+      backRightLeg = new THREE.Mesh(legGeo, coatMat);
+      backRightLeg.name = 'enemy_detail';
+      backRightLeg.position.set(0.35, 0.48, -0.48);
+      backRightLeg.castShadow = true;
+      backRightLeg.visible = this.currentQuality === 'high';
+      group.add(backRightLeg);
     }
 
     group.scale.setScalar(scale);
@@ -155,12 +297,24 @@ export class EnemyManager {
     }
 
     this.scene.add(group);
-    return { group, hpBarFill, telegraphRing };
+    return {
+      group,
+      hpBarFill,
+      telegraphRing,
+      frontLeftLeg,
+      frontRightLeg,
+      backLeftLeg,
+      backRightLeg,
+      headMesh,
+      tailMesh,
+      outlineMesh,
+      originalCoatHex: coatHex,
+    };
   }
 
   spawnEnemy(kind: EnemyKind, x: number, z: number): Enemy {
-    const { group, hpBarFill, telegraphRing } = this.buildEnemyMesh(kind);
-    group.position.set(x, 0, z);
+    const meshData = this.buildEnemyMesh(kind);
+    meshData.group.position.set(x, 0, z);
 
     const waveScale = 1 + (this.waveLevel - 1) * 0.22;
     let maxHp = GAME_CONFIG.combat.bearHp * waveScale;
@@ -196,9 +350,18 @@ export class EnemyManager {
     const enemy: Enemy = {
       id: this.nextId++,
       kind,
-      group,
-      hpBarFill,
-      telegraphRing,
+      group: meshData.group,
+      hpBarFill: meshData.hpBarFill,
+      telegraphRing: meshData.telegraphRing,
+      frontLeftLeg: meshData.frontLeftLeg,
+      frontRightLeg: meshData.frontRightLeg,
+      backLeftLeg: meshData.backLeftLeg,
+      backRightLeg: meshData.backRightLeg,
+      headMesh: meshData.headMesh,
+      tailMesh: meshData.tailMesh,
+      outlineMesh: meshData.outlineMesh,
+      originalCoatHex: meshData.originalCoatHex,
+      walkPhase: Math.random() * Math.PI * 2,
       hp: maxHp,
       maxHp,
       speed,
@@ -247,15 +410,16 @@ export class EnemyManager {
 
       e.attackCooldown = Math.max(0, e.attackCooldown - dt);
       e.axeHitCooldown = Math.max(0, e.axeHitCooldown - dt);
+
+      // Hit flash restore
       if (e.flashTimer > 0) {
         e.flashTimer = Math.max(0, e.flashTimer - dt);
         if (e.flashTimer === 0) {
           e.group.traverse((c) => {
-            if ((c as THREE.Mesh).isMesh && c !== e.hpBarFill && c !== e.telegraphRing) {
+            if ((c as THREE.Mesh).isMesh && c !== e.hpBarFill && c !== e.telegraphRing && c !== e.outlineMesh) {
               const m = (c as THREE.Mesh).material as THREE.MeshToonMaterial;
               if (m && 'color' in m) {
-                const hex = e.kind === 'wolf' ? 0x94a3b8 : e.kind === 'boss' ? 0xf1f5f9 : 0xf8fafc;
-                m.color.setHex(hex);
+                m.color.setHex(e.originalCoatHex);
               }
             }
           });
@@ -271,7 +435,6 @@ export class EnemyManager {
 
       // If player is deep inside base, enemies converge on nearest gate entrance
       if (distFromCenter > baseR + 0.4 && Math.hypot(playerPos.x, playerPos.z) < baseR - 1.2) {
-        // Nearest gate (South or North)
         targetX = 0;
         targetZ = e.group.position.z > 0 ? baseR : -baseR;
       }
@@ -299,6 +462,25 @@ export class EnemyManager {
       e.group.position.x += e.vx * dt;
       e.group.position.z += e.vz * dt;
       e.group.rotation.y = Math.atan2(e.vx, e.vz);
+
+      // Walk cycle animation: 4-leg articulated trot + head sway
+      e.walkPhase += dt * (curSpeed * 5.2);
+      const legSwing = Math.sin(e.walkPhase) * 0.58;
+
+      e.frontLeftLeg.rotation.x = legSwing;
+      e.backRightLeg.rotation.x = legSwing;
+      e.frontRightLeg.rotation.x = -legSwing;
+      e.backLeftLeg.rotation.x = -legSwing;
+
+      // Head sway
+      e.headMesh.rotation.y = Math.sin(e.walkPhase * 0.6) * 0.14;
+      e.headMesh.rotation.z = Math.cos(e.walkPhase * 0.6) * 0.06;
+
+      // Wolf tail wagging motion
+      if (e.tailMesh) {
+        e.tailMesh.rotation.y = Math.sin(e.walkPhase * 2.0) * 0.42;
+        e.tailMesh.rotation.x = Math.PI * 0.24 + Math.sin(e.walkPhase) * 0.12;
+      }
 
       // Attack player check
       if (distPlayer <= e.radius + 0.55 && e.attackCooldown <= 0) {
@@ -338,14 +520,14 @@ export class EnemyManager {
         if (obj.name === 'enemy_bar') obj.visible = true;
       });
     }
-    enemy.flashTimer = 0.12;
+    enemy.flashTimer = 0.14;
 
-    // Red hit flash
+    // White hit flash
     enemy.group.traverse((c) => {
-      if ((c as THREE.Mesh).isMesh && c !== enemy.hpBarFill && c !== enemy.telegraphRing) {
+      if ((c as THREE.Mesh).isMesh && c !== enemy.hpBarFill && c !== enemy.telegraphRing && c !== enemy.outlineMesh) {
         const m = (c as THREE.Mesh).material as THREE.MeshToonMaterial;
         if (m && 'color' in m) {
-          m.color.setHex(0xef4444);
+          m.color.setHex(0xffffff);
         }
       }
     });

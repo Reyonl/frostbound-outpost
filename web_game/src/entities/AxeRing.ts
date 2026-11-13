@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GAME_CONFIG } from '../config/gameConfig';
 import type { GraphicsQuality } from '../core/QualitySettings';
 
@@ -59,7 +60,12 @@ export class AxeRing {
 
     const handleMat = new THREE.MeshToonMaterial({ color: 0xb45309 });
     const steelMat = new THREE.MeshToonMaterial({ color: 0xf1f5f9 });
-    const edgeMat = new THREE.MeshToonMaterial({ color: 0xbae6fd });
+
+    const bladeGeo = new THREE.BoxGeometry(0.36, 0.07, 0.34);
+    bladeGeo.translate(0.14, 0, 0.24);
+    const edgeGeo = new THREE.BoxGeometry(0.08, 0.08, 0.36);
+    edgeGeo.translate(0.32, 0, 0.24);
+    const mergedBladeGeo = mergeGeometries([bladeGeo, edgeGeo]) || bladeGeo;
 
     for (let i = 0; i < this.axeCount; i++) {
       const axe = new THREE.Group();
@@ -67,13 +73,8 @@ export class AxeRing {
       handle.position.z = -0.1;
       axe.add(handle);
 
-      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.07, 0.34), steelMat);
-      blade.position.set(0.14, 0, 0.24);
+      const blade = new THREE.Mesh(mergedBladeGeo, steelMat);
       axe.add(blade);
-
-      const edge = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.36), edgeMat);
-      edge.position.set(0.32, 0, 0.24);
-      axe.add(edge);
 
       axe.scale.setScalar(this.axeScale);
       this.group.add(axe);
@@ -82,8 +83,9 @@ export class AxeRing {
     }
   }
 
-  update(dt: number): void {
-    this.angle += this.spinSpeed * dt;
+  update(dt: number, speedMultiplier = 1.0): void {
+    const dynamicSpeed = this.spinSpeed * (1 + (speedMultiplier - 1) * 0.85);
+    this.angle += dynamicSpeed * dt;
     this.slashRing.scale.setScalar((this.orbitRadius / GAME_CONFIG.axe.orbitRadius) * (0.97 + Math.sin(this.angle * 2) * 0.03));
 
     for (let i = 0; i < this.axeMeshes.length; i++) {
