@@ -9,8 +9,8 @@ export class MineRail {
   readonly depotPos = new THREE.Vector3(3.8, 0, 1.8);
 
   private readonly cartGroup = new THREE.Group();
-  private readonly cartGoldBars: THREE.Mesh[] = [];
-  private readonly depotBars: THREE.Mesh[] = [];
+  private readonly cartGoldMesh: THREE.Mesh;
+  private readonly depotBarsInstanced: THREE.InstancedMesh;
 
   unlocked = true;
   speedMultiplier = 1;
@@ -93,36 +93,80 @@ export class MineRail {
     depot.receiveShadow = true;
     this.group.add(depot);
 
+    // Depot gold bars merged into 1 InstancedMesh (saves 13 draw calls)
     const barGeo = new THREE.BoxGeometry(0.42, 0.14, 0.22);
     const barMat = new THREE.MeshToonMaterial({ color: 0xfacc15 });
+    this.depotBarsInstanced = new THREE.InstancedMesh(barGeo, barMat, 14);
+    this.depotBarsInstanced.castShadow = true;
+    this.depotBarsInstanced.count = 0;
     for (let i = 0; i < 14; i++) {
-      const bar = new THREE.Mesh(barGeo, barMat);
-      bar.position.set(
+      dummy.position.set(
         this.depotPos.x + ((i % 2) - 0.5) * 0.5,
         0.43 + Math.floor(i / 2) * 0.15,
         this.depotPos.z,
       );
-      bar.visible = false;
-      this.group.add(bar);
-      this.depotBars.push(bar);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      this.depotBarsInstanced.setMatrixAt(i, dummy.matrix);
+    }
+    this.depotBarsInstanced.instanceMatrix.needsUpdate = true;
+    this.group.add(this.depotBarsInstanced);
+
+    // Detailed Mine Cart Vehicle with flanged iron wheels & metal brackets
+    const cartParts: THREE.BufferGeometry[] = [];
+    const hopper = new THREE.BoxGeometry(0.85, 0.46, 1.15);
+    hopper.translate(0, 0.45, 0);
+    const rimLip = new THREE.BoxGeometry(0.92, 0.08, 1.22);
+    rimLip.translate(0, 0.68, 0);
+    cartParts.push(hopper, rimLip);
+
+    // 4 flanged iron wheels
+    const wheelPositions: [number, number][] = [
+      [-0.46, -0.38],
+      [0.46, -0.38],
+      [-0.46, 0.38],
+      [0.46, 0.38],
+    ];
+    for (const [wx, wz] of wheelPositions) {
+      const wGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.08, 8);
+      wGeo.rotateZ(Math.PI / 2);
+      wGeo.translate(wx, 0.16, wz);
+      cartParts.push(wGeo);
+    }
+    // 2 axles
+    for (const az of [-0.38, 0.38]) {
+      const aGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.94, 6);
+      aGeo.rotateZ(Math.PI / 2);
+      aGeo.translate(0, 0.16, az);
+      cartParts.push(aGeo);
     }
 
-    // Mine cart vehicle
-    const cartBody = new THREE.Mesh(
-      new THREE.BoxGeometry(0.85, 0.52, 1.15),
-      new THREE.MeshToonMaterial({ color: 0x475569 }),
+    const mergedCartGeo = mergeGeometries(cartParts) || hopper;
+    const cartMesh = new THREE.Mesh(
+      mergedCartGeo,
+      new THREE.MeshToonMaterial({ color: 0x334155 }),
     );
-    cartBody.position.y = 0.45;
-    cartBody.castShadow = true;
-    this.cartGroup.add(cartBody);
+    cartMesh.castShadow = true;
+    this.cartGroup.add(cartMesh);
 
-    for (let i = 0; i < 3; i++) {
-      const b = new THREE.Mesh(barGeo, barMat);
-      b.position.set(0, 0.72 + i * 0.14, 0);
-      b.visible = false;
-      this.cartGroup.add(b);
-      this.cartGoldBars.push(b);
+    // Visible gleaming gold ingots stacked in cart when loaded
+    const goldIngotsGeo: THREE.BufferGeometry[] = [];
+    for (let i = 0; i < 5; i++) {
+      const g = new THREE.BoxGeometry(0.36, 0.12, 0.22);
+      if (i < 3) {
+        g.translate(((i % 2) - 0.5) * 0.38, 0.52, (i - 1) * 0.26);
+      } else {
+        g.translate(0, 0.65, (i - 3.5) * 0.28);
+      }
+      goldIngotsGeo.push(g);
     }
+    const mergedCartGold = mergeGeometries(goldIngotsGeo) || goldIngotsGeo[0];
+    this.cartGoldMesh = new THREE.Mesh(mergedCartGold, barMat);
+    this.cartGoldMesh.castShadow = true;
+    this.cartGoldMesh.visible = false;
+    this.cartGroup.add(this.cartGoldMesh);
+
     this.group.add(this.cartGroup);
     this.group.visible = this.unlocked;
   }
@@ -162,11 +206,10 @@ export class MineRail {
     this.cartGroup.position.copy(pt);
     this.cartGroup.rotation.y = Math.atan2(tan.x, tan.z);
 
-    for (const bar of this.cartGoldBars) {
-      bar.visible = this.hasOre;
-    }
-    for (let i = 0; i < this.depotBars.length; i++) {
-      this.depotBars[i].visible = i < this.goldDelivered;
+    this.cartGoldMesh.visible = this.hasOre;
+    this.depotBarsInstanced.count = Math.min(14, this.goldDelivered);
+    if (this.goldDelivered > 0) {
+      this.depotBarsInstanced.instanceMatrix.needsUpdate = true;
     }
   }
 }

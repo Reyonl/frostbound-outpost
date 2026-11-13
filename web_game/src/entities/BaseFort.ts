@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GAME_CONFIG } from '../config/gameConfig';
 import type { GraphicsQuality } from '../core/QualitySettings';
 
@@ -11,6 +12,8 @@ export class BaseFort {
   private readonly flameInner: THREE.Mesh;
   private readonly gateBarFill: THREE.Mesh;
   private readonly glowSprite: THREE.Sprite;
+  private readonly torchSprites: THREE.Sprite[] = [];
+  private torchFlames?: THREE.Mesh;
   private readonly emberPoints: THREE.Points;
   private readonly emberPositions: Float32Array;
   private readonly emberVels: Float32Array;
@@ -145,6 +148,8 @@ export class BaseFort {
     );
     this.gateBarFill.position.set(0, 2.35, -GAME_CONFIG.world.baseRadius);
     this.group.add(this.gateBarFill);
+
+    this.buildGates(GAME_CONFIG.world.baseRadius, glowMat);
   }
 
   private resetEmber(i: number, randomHeight = false): void {
@@ -165,6 +170,9 @@ export class BaseFort {
     const isHigh = quality === 'high';
     this.glowSprite.visible = isHigh;
     this.emberPoints.visible = isHigh;
+    for (const ts of this.torchSprites) {
+      ts.visible = isHigh;
+    }
     if (this.tipMesh) this.tipMesh.visible = isHigh;
     if (this.stoneMesh) this.stoneMesh.visible = isHigh;
     if (this.logMesh) this.logMesh.visible = isHigh;
@@ -213,29 +221,115 @@ export class BaseFort {
     this.tipMesh.count = placed;
     this.group.add(postMesh, this.tipMesh);
 
-    // Instanced gate posts at North & South entrances (saves 6 draw calls)
-    const gatePostMat = new THREE.MeshToonMaterial({ color: 0xb91c1c });
-    const gateCoords: [number, number][] = [
-      [-1.95, r - 0.15],
-      [1.95, r - 0.15],
-      [-1.95, -r + 0.15],
-      [1.95, -r + 0.15],
-    ];
-    const gateMesh = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(0.45, 1.75, 0.45),
-      gatePostMat,
-      gateCoords.length,
-    );
-    gateMesh.castShadow = true;
-    gateMesh.receiveShadow = true;
-    for (let i = 0; i < gateCoords.length; i++) {
-      dummy.position.set(gateCoords[i][0], 0.87, gateCoords[i][1]);
-      dummy.rotation.set(0, 0, 0);
-      dummy.updateMatrix();
-      gateMesh.setMatrixAt(i, dummy.matrix);
+  }
+
+  private buildGates(r: number, glowMat: THREE.SpriteMaterial): void {
+    const timberGeoList: THREE.BufferGeometry[] = [];
+    const snowGeoList: THREE.BufferGeometry[] = [];
+    const ironGeoList: THREE.BufferGeometry[] = [];
+    const bannerGeoList: THREE.BufferGeometry[] = [];
+    const flameGeoList: THREE.BufferGeometry[] = [];
+
+    const gateZPositions = [-r + 0.15, r - 0.15];
+
+    for (const gz of gateZPositions) {
+      const isNorth = gz < 0;
+      // 1. Left and right heavy timber gate posts
+      const postL = new THREE.BoxGeometry(0.5, 2.5, 0.5);
+      postL.translate(-2.05, 1.25, gz);
+      const postR = new THREE.BoxGeometry(0.5, 2.5, 0.5);
+      postR.translate(2.05, 1.25, gz);
+
+      // 2. Heavy top lintel beam spanning between posts
+      const lintel = new THREE.BoxGeometry(4.7, 0.44, 0.55);
+      lintel.translate(0, 2.45, gz);
+
+      // 3. Snow cap on lintel
+      const snowLintel = new THREE.BoxGeometry(4.8, 0.16, 0.62);
+      snowLintel.translate(0, 2.73, gz);
+      snowGeoList.push(snowLintel);
+
+      // 4. Crossed timber braces (X-braces) on outer flanks
+      const braceL1 = new THREE.BoxGeometry(0.16, 2.2, 0.12);
+      braceL1.rotateZ(0.6);
+      braceL1.translate(-2.75, 1.25, gz);
+      const braceL2 = new THREE.BoxGeometry(0.16, 2.2, 0.12);
+      braceL2.rotateZ(-0.6);
+      braceL2.translate(-2.75, 1.25, gz);
+
+      const braceR1 = new THREE.BoxGeometry(0.16, 2.2, 0.12);
+      braceR1.rotateZ(0.6);
+      braceR1.translate(2.75, 1.25, gz);
+      const braceR2 = new THREE.BoxGeometry(0.16, 2.2, 0.12);
+      braceR2.rotateZ(-0.6);
+      braceR2.translate(2.75, 1.25, gz);
+
+      timberGeoList.push(postL, postR, lintel, braceL1, braceL2, braceR1, braceR2);
+
+      // 5. Iron bracket straps and decorative studs
+      const strapL = new THREE.BoxGeometry(0.54, 0.14, 0.54);
+      strapL.translate(-2.05, 2.2, gz);
+      const strapR = new THREE.BoxGeometry(0.54, 0.14, 0.54);
+      strapR.translate(2.05, 2.2, gz);
+      ironGeoList.push(strapL, strapR);
+
+      // 6. Hanging Crimson Fort Banner
+      const bannerGeo = new THREE.BoxGeometry(0.85, 1.35, 0.05);
+      bannerGeo.translate(0, 1.55, gz + (isNorth ? 0.32 : -0.32));
+      bannerGeoList.push(bannerGeo);
+
+      // 7. Sconces & Torches mounted on left and right posts (NO dynamic lights!)
+      for (const gx of [-2.05, 2.05]) {
+        const sconceZ = gz + (isNorth ? 0.35 : -0.35);
+        const ironArm = new THREE.BoxGeometry(0.08, 0.08, 0.35);
+        ironArm.translate(gx, 1.62, gz + (isNorth ? 0.18 : -0.18));
+        ironGeoList.push(ironArm);
+
+        const torchWood = new THREE.CylinderGeometry(0.06, 0.05, 0.42, 6);
+        torchWood.translate(gx, 1.7, sconceZ);
+        timberGeoList.push(torchWood);
+
+        const flameCone = new THREE.ConeGeometry(0.12, 0.32, 6);
+        flameCone.translate(gx, 1.95, sconceZ);
+        flameGeoList.push(flameCone);
+
+        // Torch glow sprite (additive faked bloom)
+        const torchSprite = new THREE.Sprite(glowMat);
+        torchSprite.position.set(gx, 1.98, sconceZ);
+        torchSprite.scale.set(1.4, 1.4, 1);
+        this.group.add(torchSprite);
+        this.torchSprites.push(torchSprite);
+      }
     }
-    gateMesh.instanceMatrix.needsUpdate = true;
-    this.group.add(gateMesh);
+
+    const timberMat = new THREE.MeshToonMaterial({ color: 0x5c3317 });
+    const mergedTimber = mergeGeometries(timberGeoList) || timberGeoList[0];
+    const timberMesh = new THREE.Mesh(mergedTimber, timberMat);
+    timberMesh.castShadow = true;
+    timberMesh.receiveShadow = true;
+    this.group.add(timberMesh);
+
+    const snowMat = new THREE.MeshToonMaterial({ color: 0xf1f5f9 });
+    const mergedSnow = mergeGeometries(snowGeoList) || snowGeoList[0];
+    const snowMesh = new THREE.Mesh(mergedSnow, snowMat);
+    snowMesh.castShadow = true;
+    this.group.add(snowMesh);
+
+    const ironMat = new THREE.MeshToonMaterial({ color: 0x334155 });
+    const mergedIron = mergeGeometries(ironGeoList) || ironGeoList[0];
+    const ironMesh = new THREE.Mesh(mergedIron, ironMat);
+    this.group.add(ironMesh);
+
+    const bannerMat = new THREE.MeshToonMaterial({ color: 0x991b1b });
+    const mergedBanner = mergeGeometries(bannerGeoList) || bannerGeoList[0];
+    const bannerMesh = new THREE.Mesh(mergedBanner, bannerMat);
+    bannerMesh.castShadow = true;
+    this.group.add(bannerMesh);
+
+    const flameMat = new THREE.MeshBasicMaterial({ color: 0xf97316 });
+    const mergedFlames = mergeGeometries(flameGeoList) || flameGeoList[0];
+    this.torchFlames = new THREE.Mesh(mergedFlames, flameMat);
+    this.group.add(this.torchFlames);
   }
 
   upgradeFence(): void {
@@ -260,10 +354,22 @@ export class BaseFort {
     this.flameInner.scale.set(f2, 0.95 + Math.cos(this.fireTime * 1.7) * 0.2, f2);
     this.fireLight.intensity = 2.2 + Math.sin(this.fireTime * 1.9) * 0.45;
 
+    // Flickering torch flame meshes
+    if (this.torchFlames) {
+      const tfScale = 1.0 + Math.sin(this.fireTime * 2.2) * 0.14;
+      this.torchFlames.scale.set(tfScale, 0.92 + Math.cos(this.fireTime * 1.8) * 0.16, tfScale);
+    }
+
     if (this.quality === 'high') {
       const glowScale = 2.6 + Math.sin(this.fireTime * 1.6) * 0.35;
       this.glowSprite.scale.set(glowScale, glowScale, 1);
       (this.glowSprite.material as THREE.SpriteMaterial).opacity = 0.72 + Math.cos(this.fireTime * 2.1) * 0.16;
+
+      const torchGlowScale = 1.35 + Math.sin(this.fireTime * 2.4) * 0.22;
+      for (const ts of this.torchSprites) {
+        ts.scale.set(torchGlowScale, torchGlowScale, 1);
+        (ts.material as THREE.SpriteMaterial).opacity = 0.65 + Math.cos(this.fireTime * 2.8) * 0.15;
+      }
 
       const posAttr = this.emberPoints.geometry.attributes.position as THREE.BufferAttribute;
       for (let i = 0; i < this.emberCount; i++) {

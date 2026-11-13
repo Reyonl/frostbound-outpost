@@ -66,7 +66,7 @@ export class EnemyManager {
           obj.visible = isHigh;
         }
         if (obj.name === 'enemy_bar') {
-          obj.visible = isHigh || e.hp < e.maxHp || e.kind === 'boss' || e.kind === 'elite';
+          obj.visible = e.hp < e.maxHp || e.kind === 'boss' || e.kind === 'elite';
         }
       });
     }
@@ -123,32 +123,21 @@ export class EnemyManager {
       outlineMesh.visible = this.currentQuality === 'high';
       group.add(outlineMesh);
 
-      // Lowered stalk head
+      // Lowered stalk head with muzzle and ears merged into 1 geometry
       const headGeo = new THREE.BoxGeometry(0.38, 0.34, 0.48);
-      headMesh = new THREE.Mesh(headGeo, coatMat);
-      headMesh.position.set(0, 0.62, 0.72);
-      headMesh.castShadow = true;
-      group.add(headMesh);
-
-      // Long predator muzzle
-      const snout = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.18, 0.38), darkMat);
-      snout.name = 'enemy_detail';
-      snout.position.set(0, -0.06, 0.36);
-      snout.visible = this.currentQuality === 'high';
-      headMesh.add(snout);
-
-      // Pointed alert wolf ears merged into 1 mesh
+      const snoutGeo = new THREE.BoxGeometry(0.22, 0.18, 0.38);
+      snoutGeo.translate(0, -0.06, 0.36);
       const earL = new THREE.ConeGeometry(0.09, 0.24, 4);
       earL.rotateX(-0.25);
       earL.translate(-0.14, 0.22, -0.05);
       const earR = new THREE.ConeGeometry(0.09, 0.24, 4);
       earR.rotateX(-0.25);
       earR.translate(0.14, 0.22, -0.05);
-      const wolfEarsGeo = mergeGeometries([earL, earR]) || earL;
-      const wolfEarsMesh = new THREE.Mesh(wolfEarsGeo, darkMat);
-      wolfEarsMesh.name = 'enemy_detail';
-      wolfEarsMesh.visible = this.currentQuality === 'high';
-      headMesh.add(wolfEarsMesh);
+      const mergedWolfHeadGeo = mergeGeometries([headGeo, snoutGeo, earL, earR]) || headGeo;
+      headMesh = new THREE.Mesh(mergedWolfHeadGeo, coatMat);
+      headMesh.position.set(0, 0.62, 0.72);
+      headMesh.castShadow = true;
+      group.add(headMesh);
 
       // Bushy tail with pivot at base
       const tailGeo = new THREE.CylinderGeometry(0.06, 0.13, 0.62, 5);
@@ -201,31 +190,19 @@ export class EnemyManager {
       outlineMesh.visible = this.currentQuality === 'high';
       group.add(outlineMesh);
 
-      // Heavy bear head with neck pivot
+      // Heavy bear head with snout and ears merged into 1 geometry
       const headGeo = new THREE.BoxGeometry(0.64, 0.56, 0.68);
-      headMesh = new THREE.Mesh(headGeo, coatMat);
-      headMesh.position.set(0, 0.86, 0.84);
-      headMesh.castShadow = true;
-      group.add(headMesh);
-
-      // Dark snout with black nose tip
-      const snout = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.26, 0.34), darkMat);
-      snout.name = 'enemy_detail';
-      snout.position.set(0, -0.08, 0.42);
-      snout.visible = this.currentQuality === 'high';
-      headMesh.add(snout);
-
-      // Rounded bear ears merged into 1 mesh
-      const earMat = isElite || isBoss ? new THREE.MeshToonMaterial({ color: 0xdc2626 }) : coatMat;
+      const snoutGeo = new THREE.BoxGeometry(0.34, 0.26, 0.34);
+      snoutGeo.translate(0, -0.08, 0.42);
       const earGeoL = isElite || isBoss ? new THREE.ConeGeometry(0.12, 0.42, 5) : new THREE.SphereGeometry(0.13, 6, 6);
       earGeoL.translate(-0.26, 0.32, -0.06);
       const earGeoR = isElite || isBoss ? new THREE.ConeGeometry(0.12, 0.42, 5) : new THREE.SphereGeometry(0.13, 6, 6);
       earGeoR.translate(0.26, 0.32, -0.06);
-      const bearEarsGeo = mergeGeometries([earGeoL, earGeoR]) || earGeoL;
-      const earsMesh = new THREE.Mesh(bearEarsGeo, earMat);
-      earsMesh.name = 'enemy_detail';
-      earsMesh.visible = this.currentQuality === 'high';
-      headMesh.add(earsMesh);
+      const mergedBearHeadGeo = mergeGeometries([headGeo, snoutGeo, earGeoL, earGeoR]) || headGeo;
+      headMesh = new THREE.Mesh(mergedBearHeadGeo, coatMat);
+      headMesh.position.set(0, 0.86, 0.84);
+      headMesh.castShadow = true;
+      group.add(headMesh);
 
       // 4 heavy articulated bear paws/legs
       const legGeo = new THREE.BoxGeometry(0.26, 0.46, 0.28);
@@ -269,7 +246,7 @@ export class EnemyManager {
     );
     barBg.name = 'enemy_bar';
     barBg.position.set(0, 1.55, 0);
-    barBg.visible = this.currentQuality === 'high' || isBoss || isElite;
+    barBg.visible = isBoss || isElite;
     group.add(barBg);
 
     const hpBarFill = new THREE.Mesh(
@@ -278,7 +255,7 @@ export class EnemyManager {
     );
     hpBarFill.name = 'enemy_bar';
     hpBarFill.position.set(0, 1.55, 0.01);
-    hpBarFill.visible = this.currentQuality === 'high' || isBoss || isElite;
+    hpBarFill.visible = isBoss || isElite;
     group.add(hpBarFill);
 
     let telegraphRing: THREE.Mesh | undefined;
@@ -515,11 +492,9 @@ export class EnemyManager {
     if (!enemy.alive) return false;
 
     enemy.hp = Math.max(0, enemy.hp - damage);
-    if (this.currentQuality === 'low') {
-      enemy.group.traverse((obj) => {
-        if (obj.name === 'enemy_bar') obj.visible = true;
-      });
-    }
+    enemy.group.traverse((obj) => {
+      if (obj.name === 'enemy_bar') obj.visible = true;
+    });
     enemy.flashTimer = 0.14;
 
     // White hit flash
