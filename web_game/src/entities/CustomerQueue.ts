@@ -12,7 +12,6 @@ interface CounterLane {
   counterPos: THREE.Vector3;
   dropPos: THREE.Vector3;
   cashPilePos: THREE.Vector3;
-  ringMesh: THREE.Mesh;
   cashPileAmount: number;
   needed: number;
   delivered: number;
@@ -20,6 +19,7 @@ interface CounterLane {
   bubbleEl: HTMLDivElement;
   serveCooldown: number;
   magnetCooldown: number;
+  advanceTimer: number;
 }
 
 const LANE_DEFS: { kind: CarryType; x: number; icon: string; minNeed: number; maxNeed: number; pay: number }[] = [
@@ -55,6 +55,7 @@ export class CustomerQueue {
   readonly npcCoatMesh: THREE.InstancedMesh;
   readonly npcHoodMesh: THREE.InstancedMesh;
   readonly npcFaceMesh: THREE.InstancedMesh;
+  readonly ringInstancedMesh: THREE.InstancedMesh;
   private readonly dummy = new THREE.Object3D();
 
   constructor(scene: THREE.Scene, hudRoot: HTMLElement) {
@@ -115,24 +116,29 @@ export class CustomerQueue {
 
     this.group.add(this.npcCoatMesh, this.npcHoodMesh, this.npcFaceMesh);
 
+    // 4. Instanced Delivery Rings (3 counter lanes merged into 1 draw call)
+    const ringGeo = new THREE.RingGeometry(0.82, 1.02, 24);
+    ringGeo.rotateX(-Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0x4ade80,
+      transparent: true,
+      opacity: 0.75,
+      side: THREE.DoubleSide,
+    });
+    this.ringInstancedMesh = new THREE.InstancedMesh(ringGeo, ringMat, LANE_DEFS.length);
+    for (let i = 0; i < LANE_DEFS.length; i++) {
+      this.dummy.position.set(LANE_DEFS[i].x, 0.085, 5.0 - 1.35);
+      this.dummy.rotation.set(0, 0, 0);
+      this.dummy.scale.set(1, 1, 1);
+      this.dummy.updateMatrix();
+      this.ringInstancedMesh.setMatrixAt(i, this.dummy.matrix);
+    }
+    this.ringInstancedMesh.instanceMatrix.needsUpdate = true;
+    this.group.add(this.ringInstancedMesh);
+
     for (const def of LANE_DEFS) {
       const counterZ = 5.0;
       const dropPos = new THREE.Vector3(def.x, 0.085, counterZ - 1.35);
-
-      const ringGeo = new THREE.RingGeometry(0.82, 1.02, 24);
-      ringGeo.rotateX(-Math.PI / 2);
-      const ringMesh = new THREE.Mesh(
-        ringGeo,
-        new THREE.MeshBasicMaterial({
-          color: 0x4ade80,
-          transparent: true,
-          opacity: 0.75,
-          side: THREE.DoubleSide,
-        }),
-      );
-      ringMesh.position.copy(dropPos);
-      this.group.add(ringMesh);
-
       const cashPilePos = new THREE.Vector3(def.x + 0.78, 0.08, counterZ - 0.65);
 
       const bubbleEl = document.createElement('div');
@@ -145,7 +151,6 @@ export class CustomerQueue {
         counterPos: new THREE.Vector3(def.x, 0.8, counterZ),
         dropPos,
         cashPilePos,
-        ringMesh,
         cashPileAmount: 0,
         needed: need,
         delivered: 0,
@@ -153,6 +158,7 @@ export class CustomerQueue {
         bubbleEl,
         serveCooldown: 0,
         magnetCooldown: 0,
+        advanceTimer: 0,
       });
     }
   }
@@ -185,18 +191,26 @@ export class CustomerQueue {
 
       lane.serveCooldown = Math.max(0, lane.serveCooldown - dt);
       lane.magnetCooldown = Math.max(0, lane.magnetCooldown - dt);
+      lane.advanceTimer = Math.max(0, lane.advanceTimer - dt);
+
+      // Smooth step forward when previous survivor finishes and queue advances
+      const advanceProg = lane.advanceTimer > 0 ? (lane.advanceTimer / 0.45) : 0;
+      const advanceOffset = advanceProg * 1.65;
 
       // Animate 3 queued survivors per lane
       for (let q = 0; q < 3; q++) {
         const npcIdx = li * 3 + q;
-        const baseZ = 5.0 + 1.35 + q * 1.65;
-        // Idle bob & subtle shivering motion
-        const bobY = Math.abs(Math.sin(nowTime + q + li)) * 0.05;
-        const shiverX = (Math.sin(nowTime * 5 + npcIdx) * 0.02) * (q === 0 ? 0.5 : 1.0);
+        const targetZ = 5.0 + 1.35 + q * 1.65;
+        const baseZ = q > 0 ? targetZ - advanceOffset : targetZ;
 
-        // Coat
+        // Idle bob & rapid shivering motion in the freezing cold
+        const bobY = Math.abs(Math.sin(nowTime + q + li)) * 0.05;
+        const shiverX = Math.sin(nowTime * 18 + npcIdx * 3.7) * 0.026;
+        const shiverRotZ = Math.sin(nowTime * 14 + npcIdx * 2.1) * 0.032;
+
+        // Coat (turned to face counter at yaw = Math.PI)
         this.dummy.position.set(def.x + shiverX, 0.45 + bobY, baseZ);
-        this.dummy.rotation.set(0, Math.PI, 0);
+        this.dummy.rotation.set(0, Math.PI, shiverRotZ);
         this.dummy.updateMatrix();
         this.npcCoatMesh.setMatrixAt(npcIdx, this.dummy.matrix);
 
@@ -213,7 +227,12 @@ export class CustomerQueue {
 
       const distDrop = Math.hypot(playerPos.x - lane.dropPos.x, playerPos.z - lane.dropPos.z);
       const inDrop = distDrop <= 1.45;
-      lane.ringMesh.scale.setScalar(inDrop ? 1.12 : 1.0);
+      const ringScale = inDrop ? 1.12 : 1.0;
+      this.dummy.position.copy(lane.dropPos);
+      this.dummy.rotation.set(0, 0, 0);
+      this.dummy.scale.set(ringScale, ringScale, ringScale);
+      this.dummy.updateMatrix();
+      this.ringInstancedMesh.setMatrixAt(li, this.dummy.matrix);
 
       if (inDrop && lane.serveCooldown <= 0 && lane.delivered < lane.needed) {
         const fromPack = stack.popLastOf(lane.kind);
@@ -241,6 +260,7 @@ export class CustomerQueue {
                 const payout = computeOrderTotal(lane.needed, lane.rewardPerUnit);
                 lane.cashPileAmount += payout;
                 this.ordersCompleted += 1;
+                lane.advanceTimer = 0.45;
                 particles.burst(lane.cashPilePos.x, 0.7, lane.cashPilePos.z, 0x22c55e, 10, 4.2, 0.9);
                 floatingText.spawn(lane.counterPos.x, 2.0, lane.counterPos.z, `+$${payout}`, '#4ade80', 1.15);
                 lane.delivered = 0;
@@ -294,6 +314,7 @@ export class CustomerQueue {
     this.npcCoatMesh.instanceMatrix.needsUpdate = true;
     this.npcHoodMesh.instanceMatrix.needsUpdate = true;
     this.npcFaceMesh.instanceMatrix.needsUpdate = true;
+    this.ringInstancedMesh.instanceMatrix.needsUpdate = true;
 
     this.billInstancedMesh.count = totalBills;
     if (totalBills > 0) {

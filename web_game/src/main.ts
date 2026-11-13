@@ -472,7 +472,7 @@ export class FrostboundGame {
       this.applyComputedStats();
       const move = this.input.getMoveVector();
       this.player.update(move, dt);
-      this.axeRing.update(dt);
+      this.axeRing.update(dt, move.magnitude > 0.05 ? 1.85 : 1.0);
 
       const moveSpeed = Math.hypot(move.x, move.z);
       if (moveSpeed > 0.08) {

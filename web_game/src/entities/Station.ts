@@ -27,7 +27,7 @@ export class Station {
   private readonly ringMesh: THREE.Mesh;
   private readonly activeSpinner: THREE.Mesh;
   private awning?: THREE.Mesh;
-  private readonly outputVisuals: THREE.Mesh[] = [];
+  private readonly outputInstanced: THREE.InstancedMesh;
   private readonly badgeCanvas: HTMLCanvasElement;
   private readonly badgeCtx: CanvasRenderingContext2D;
   private readonly badgeTexture: THREE.CanvasTexture;
@@ -86,17 +86,21 @@ export class Station {
       this.activeSpinner = glow;
     }
 
-    // Output shelf stack visuals
+    // Output shelf stack visuals merged into InstancedMesh (saves up to 22 draw calls)
     const outGeo = new THREE.BoxGeometry(0.55, 0.14, 0.32);
     const outColor = config.inputType === 'wood' ? 0xd97706 : 0xf87171;
+    const outMat = new THREE.MeshToonMaterial({ color: outColor });
+    this.outputInstanced = new THREE.InstancedMesh(outGeo, outMat, 12);
+    this.outputInstanced.castShadow = true;
+    this.outputInstanced.count = 0;
+    const dummyOut = new THREE.Object3D();
     for (let i = 0; i < 12; i++) {
-      const m = new THREE.Mesh(outGeo, new THREE.MeshToonMaterial({ color: outColor }));
-      m.position.set(0.62, 0.64 + i * 0.15, 0);
-      m.visible = false;
-      m.castShadow = true;
-      this.group.add(m);
-      this.outputVisuals.push(m);
+      dummyOut.position.set(0.62, 0.64 + i * 0.15, 0);
+      dummyOut.updateMatrix();
+      this.outputInstanced.setMatrixAt(i, dummyOut.matrix);
     }
+    this.outputInstanced.instanceMatrix.needsUpdate = true;
+    this.group.add(this.outputInstanced);
 
     // Glowing ring drop zone on ground
     const ringGeo = new THREE.RingGeometry(
@@ -224,9 +228,7 @@ export class Station {
       }
     }
 
-    for (let i = 0; i < this.outputVisuals.length; i++) {
-      this.outputVisuals[i].visible = i < this.processedCount;
-    }
+    this.outputInstanced.count = Math.min(12, this.processedCount);
     this.redrawBadge();
   }
 }
