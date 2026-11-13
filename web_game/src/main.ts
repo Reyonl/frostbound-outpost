@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { GAME_CONFIG } from './config/gameConfig';
 import { AudioSynth } from './core/AudioSynth';
 import { Engine } from './core/Engine';
@@ -39,6 +40,8 @@ declare global {
   interface Window {
     __frostboundDebug?: {
       getState: () => Record<string, unknown>;
+      getCategoryBreakdown?: () => Record<string, number>;
+      getVisibleMeshList?: () => Array<{ name: string; type: string; parent: string; geo: string }>;
     };
   }
 }
@@ -103,6 +106,14 @@ export class FrostboundGame {
     this.qualityMgr.onChange((q) => {
       this.engine.applyQuality(q);
       this.baseFort.applyQuality(q);
+      this.trees.applyQuality(q);
+      this.enemyMgr.applyQuality(q);
+      this.customerQueue.applyQuality(q);
+      this.player.applyQuality(q);
+      this.axeRing.applyQuality(q);
+      this.turretMgr.applyQuality(q);
+      this.sawmill.applyQuality(q);
+      this.smokehouse.applyQuality(q);
       this.hud.setQualityBadge(q);
     });
 
@@ -126,15 +137,24 @@ export class FrostboundGame {
       processDuration: GAME_CONFIG.stations.smokehouseTime,
     });
 
+    this.sawmill.applyQuality(this.qualityMgr.quality);
+    this.smokehouse.applyQuality(this.qualityMgr.quality);
+
     this.mineRail = new MineRail(this.engine.scene);
     this.customerQueue = new CustomerQueue(this.engine.scene, hudRoot);
+    this.customerQueue.applyQuality(this.qualityMgr.quality);
     this.unlockSystem = new UnlockSystem(this.engine.scene);
     this.player = new Player(this.engine.scene);
+    this.player.applyQuality(this.qualityMgr.quality);
     this.axeRing = new AxeRing(this.player.group);
+    this.axeRing.applyQuality(this.qualityMgr.quality);
     this.helperNpc = new HelperNPC(this.engine.scene);
     this.trees = new TreeCluster(this.engine.scene);
+    this.trees.applyQuality(this.qualityMgr.quality);
     this.enemyMgr = new EnemyManager(this.engine.scene);
+    this.enemyMgr.applyQuality(this.qualityMgr.quality);
     this.turretMgr = new TurretManager(this.engine.scene);
+    this.turretMgr.applyQuality(this.qualityMgr.quality);
     this.particles = new ParticleSystem(this.engine.scene);
     this.floatingText = new FloatingTextSystem(hudRoot);
     this.randomEvents = new RandomEventSystem(this.engine.scene);
@@ -177,6 +197,99 @@ export class FrostboundGame {
     };
 
     window.__frostboundDebug = {
+      getVisibleMeshList: () => {
+        const list: { name: string; type: string; parent: string; geo: string }[] = [];
+        this.engine.scene.traverse((obj) => {
+          let p: THREE.Object3D | null = obj;
+          while (p) {
+            if (!p.visible) return;
+            p = p.parent;
+          }
+          if ((obj as THREE.Mesh).isMesh || (obj as THREE.Points).isPoints || (obj as THREE.Sprite).isSprite) {
+            list.push({
+              name: obj.name || 'unnamed',
+              type: obj.type,
+              parent: obj.parent?.name || obj.parent?.type || 'none',
+              geo: (obj as THREE.Mesh).geometry?.type || 'none',
+            });
+          }
+        });
+        return list;
+      },
+      getCategoryBreakdown: () => {
+        const categories: Record<string, number> = {
+          terrain: 0,
+          trees: 0,
+          fence: 0,
+          buildings: 0,
+          characters: 0,
+          particles: 0,
+          ui_labels: 0,
+          other: 0,
+        };
+
+        this.engine.scene.traverse((obj) => {
+          let p: THREE.Object3D | null = obj;
+          while (p) {
+            if (!p.visible) return;
+            p = p.parent;
+          }
+          if ((obj as THREE.Mesh).isMesh || (obj as THREE.Points).isPoints || (obj as THREE.Sprite).isSprite) {
+            let cat = 'other';
+            let curr: THREE.Object3D | null = obj;
+            while (curr) {
+              if (curr === this.player.group || curr === this.helperNpc.group) {
+                cat = 'characters';
+                break;
+              }
+              if (curr === this.baseFort.group) {
+                cat = 'fence';
+                break;
+              }
+              if (curr === this.trees.group) {
+                cat = 'trees';
+                break;
+              }
+              if (
+                curr === this.sawmill.group ||
+                curr === this.smokehouse.group ||
+                curr === this.mineRail.group ||
+                curr === this.customerQueue.group
+              ) {
+                cat = 'buildings';
+                break;
+              }
+              if (
+                curr === this.unlockSystem.pads[0]?.group ||
+                curr === this.unlockSystem.pads[1]?.group
+              ) {
+                cat = 'ui_labels';
+                break;
+              }
+              if (curr.name === 'particles') {
+                cat = 'particles';
+                break;
+              }
+              curr = curr.parent;
+            }
+            if (cat === 'other') {
+              for (const e of this.enemyMgr.enemies) {
+                if (obj.parent === e.group || obj.parent?.parent === e.group || obj === e.group) {
+                  cat = 'characters';
+                  break;
+                }
+              }
+            }
+            if (cat === 'other') {
+              if (obj.name === 'terrain' || (obj as THREE.Mesh).geometry?.type?.includes('Plane')) {
+                cat = 'terrain';
+              }
+            }
+            categories[cat] = (categories[cat] || 0) + 1;
+          }
+        });
+        return categories;
+      },
       getState: () => {
         let nearestTree: { x: number; z: number } | null = null;
         let bestDist = Infinity;

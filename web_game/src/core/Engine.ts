@@ -20,6 +20,7 @@ export class Engine {
   private extraZoom = 0;
   private aspectFactor = 1.0;
   private currentQuality: GraphicsQuality = 'high';
+  private rockMesh!: THREE.InstancedMesh;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -84,13 +85,17 @@ export class Engine {
   applyQuality(quality: GraphicsQuality): void {
     this.currentQuality = quality;
     if (quality === 'high') {
+      this.renderer.shadowMap.enabled = true;
       this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      this.sunLight.castShadow = true;
       this.sunLight.shadow.mapSize.set(1024, 1024);
       this.footprints.setEnabled(true);
+      if (this.rockMesh) this.rockMesh.visible = true;
     } else {
-      this.renderer.shadowMap.type = THREE.BasicShadowMap;
-      this.sunLight.shadow.mapSize.set(512, 512);
+      this.renderer.shadowMap.enabled = false;
+      this.sunLight.castShadow = false;
       this.footprints.setEnabled(false);
+      if (this.rockMesh) this.rockMesh.visible = false;
     }
     if (this.sunLight.shadow.map) {
       this.sunLight.shadow.map.dispose();
@@ -99,16 +104,13 @@ export class Engine {
   }
 
   private updateAspectFactor(aspect: number): void {
-    // Standard baseline portrait aspect ~0.62. On narrower screens (e.g. 390/844 = 0.46),
-    // scale camera distance smoothly so all base unlock pads stay within view.
     const baseline = 0.62;
     this.aspectFactor = Math.max(1.0, Math.min(1.42, Math.sqrt(baseline / Math.max(aspect, 0.35))));
   }
 
   private buildAtmosphereDome(): void {
-    // Inverted dome for smooth vertical sky gradient behind fog
     const domeGeo = new THREE.SphereGeometry(75, 24, 16, 0, Math.PI * 2, 0, Math.PI * 0.55);
-    domeGeo.scale(-1, 1, 1); // Face inward
+    domeGeo.scale(-1, 1, 1);
 
     const count = domeGeo.attributes.position.count;
     const colors = new Float32Array(count * 3);
@@ -160,15 +162,10 @@ export class Engine {
       const z = pos.getZ(i);
       const dist = Math.hypot(x, z);
 
-      // Height undulation:
-      // Inside base is leveled packed ground.
-      // Along fence: natural snow mounds.
-      // Outside base: gentle rolling snow drifts.
       let height = 0;
       if (dist < baseR - 0.7) {
         height = 0;
       } else if (dist <= baseR + 1.2) {
-        // Snow mound along fence line, dipping at entrances
         const isSouthGate = z > baseR * 0.82 && Math.abs(x) < 2.2;
         const isNorthGate = z < -baseR * 0.82 && Math.abs(x) < 2.2;
         const isEastGap = x > baseR * 0.82 && Math.abs(z) < 2.4;
@@ -184,29 +181,21 @@ export class Engine {
       }
       pos.setY(i, height);
 
-      // Vertex color blending:
-      // Inner outpost: warm packed dirt.
-      // Soft transition band at base perimeter: smoothly blends into snow.
-      // South trail: leading out from southern gate.
       const isSouthTrail = z >= baseR - 1.2 && z <= baseR + 8.5 && Math.abs(x) < 2.1;
 
       if (dist < baseR - 1.8) {
-        // Center dirt with subtle variation
         const varT = (Math.sin(x * 1.5) * Math.cos(z * 1.5) + 1) * 0.5;
         col.copy(dirtColor).lerp(dirtDark, varT * 0.35);
       } else if (dist <= baseR + 0.4) {
-        // Hermite smoothstep blend from dirt to snow
         const t = (dist - (baseR - 1.8)) / (baseR + 0.4 - (baseR - 1.8));
         const smoothT = t * t * (3 - 2 * t);
-        const centerCol = isSouthTrail ? dirtColor : dirtColor;
-        col.copy(centerCol).lerp(snowColor, smoothT);
+        col.copy(dirtColor).lerp(snowColor, smoothT);
       } else if (isSouthTrail) {
         const trailFade = (z - (baseR + 0.4)) / 8.0;
         const edgeFade = Math.abs(x) / 2.1;
         const dirtRatio = Math.max(0, (1 - trailFade) * (1 - edgeFade * 0.8));
         col.copy(snowColor).lerp(dirtColor, dirtRatio * 0.75);
       } else {
-        // Snow terrain with height-based subtle shadow tint
         const shade = Math.max(0, Math.min(1, (height + 0.5) / 1.2));
         col.copy(snowShadow).lerp(snowColor, shade);
       }
@@ -226,7 +215,7 @@ export class Engine {
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // Decorative arctic boulders around the wilderness
+    // Decorative arctic boulders merged into InstancedMesh (saves 10 draw calls)
     const rockGeo = new THREE.DodecahedronGeometry(1.2, 0);
     const rockMat = new THREE.MeshToonMaterial({ color: 0x5b6b82 });
     const rockSpots: [number, number, number][] = [
@@ -237,15 +226,21 @@ export class Engine {
       [8.8, 12.2, 0.9],
       [-9.8, -6.5, 0.8],
     ];
-    for (const [rx, rz, scale] of rockSpots) {
-      const rock = new THREE.Mesh(rockGeo, rockMat);
-      rock.position.set(rx, 0.48 * scale, rz);
-      rock.scale.set(scale * 1.25, scale * 0.78, scale);
-      rock.rotation.set(0.2, rx * 0.5, 0.15);
-      rock.castShadow = true;
-      rock.receiveShadow = true;
-      this.scene.add(rock);
+    this.rockMesh = new THREE.InstancedMesh(rockGeo, rockMat, rockSpots.length);
+    this.rockMesh.castShadow = true;
+    this.rockMesh.receiveShadow = true;
+    const dummyRock = new THREE.Object3D();
+    for (let i = 0; i < rockSpots.length; i++) {
+      const [rx, rz, scale] = rockSpots[i];
+      dummyRock.position.set(rx, 0.48 * scale, rz);
+      dummyRock.scale.set(scale * 1.25, scale * 0.78, scale);
+      dummyRock.rotation.set(0.2, rx * 0.5, 0.15);
+      dummyRock.updateMatrix();
+      this.rockMesh.setMatrixAt(i, dummyRock.matrix);
     }
+    this.rockMesh.instanceMatrix.needsUpdate = true;
+    this.rockMesh.visible = this.currentQuality === 'high';
+    this.scene.add(this.rockMesh);
   }
 
   addShake(amount: number): void {
@@ -294,7 +289,6 @@ export class Engine {
     this.camera.position.copy(this.desiredCamPos).add(this.shakeOffset);
     this.camera.lookAt(this.targetLook);
 
-    // Keep directional shadow frustum centered near the player
     this.sunLight.position.set(this.targetLook.x + 16, 26, this.targetLook.z + 14);
     this.sunLight.target.position.copy(this.targetLook);
   }
