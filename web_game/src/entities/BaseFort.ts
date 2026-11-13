@@ -84,6 +84,7 @@ export class BaseFort {
 
     this.fireLight = new THREE.PointLight(0xffa347, 2.4, 13, 1.5);
     this.fireLight.position.set(this.campfirePos.x, 1.4, this.campfirePos.z);
+    this.fireLight.castShadow = false; // Point light explicitly does NOT cast shadows; only sun directional light casts shadows
     this.group.add(this.fireLight);
 
     // Additive glow sprite faking campfire bloom
@@ -132,6 +133,7 @@ export class BaseFort {
       depthWrite: false,
     });
     this.emberPoints = new THREE.Points(emberGeo, emberMat);
+    this.emberPoints.name = 'particles_embers';
     this.group.add(this.emberPoints);
 
     // Floating gate HP bar above north gate

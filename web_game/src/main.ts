@@ -190,16 +190,36 @@ export class FrostboundGame {
 
     window.FrostboundLifecycle = {
       onPause: () => {
+        if (this.paused) return;
         this.paused = true;
         this.persistSave();
         this.audio.suspend();
       },
       onResume: () => {
+        if (!this.paused) return;
         this.paused = false;
         this.lastTime = performance.now();
         this.audio.unlock();
       },
     };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          window.FrostboundLifecycle?.onPause?.();
+        } else {
+          window.FrostboundLifecycle?.onResume?.();
+        }
+      });
+
+      window.addEventListener('blur', () => {
+        window.FrostboundLifecycle?.onPause?.();
+      });
+
+      window.addEventListener('focus', () => {
+        window.FrostboundLifecycle?.onResume?.();
+      });
+    }
 
     window.__frostboundDebug = {
       getVisibleMeshList: () => {
@@ -241,50 +261,53 @@ export class FrostboundGame {
           }
           if ((obj as THREE.Mesh).isMesh || (obj as THREE.Points).isPoints || (obj as THREE.Sprite).isSprite) {
             let cat = 'other';
-            let curr: THREE.Object3D | null = obj;
-            while (curr) {
-              if (
-                curr === this.player.group ||
-                curr === this.helperNpc.group ||
-                obj === this.customerQueue.npcCoatMesh ||
-                obj === this.customerQueue.npcHoodMesh ||
-                obj === this.customerQueue.npcFaceMesh ||
-                obj === this.customerQueue.npcScarfMesh
-              ) {
-                cat = 'characters';
-                break;
+            if (
+              (obj as THREE.Points).isPoints ||
+              (obj.name && obj.name.startsWith('particles'))
+            ) {
+              cat = 'particles';
+            } else {
+              let curr: THREE.Object3D | null = obj;
+              while (curr) {
+                if (
+                  curr === this.player.group ||
+                  curr === this.helperNpc.group ||
+                  obj === this.customerQueue.npcCoatMesh ||
+                  obj === this.customerQueue.npcHoodMesh ||
+                  obj === this.customerQueue.npcFaceMesh ||
+                  obj === this.customerQueue.npcScarfMesh
+                ) {
+                  cat = 'characters';
+                  break;
+                }
+                if (curr === this.baseFort.group) {
+                  cat = 'fence';
+                  break;
+                }
+                if (curr === this.trees.group) {
+                  cat = 'trees';
+                  break;
+                }
+                if (
+                  curr === this.sawmill.group ||
+                  curr === this.smokehouse.group ||
+                  curr === this.mineRail.group ||
+                  curr === this.customerQueue.group ||
+                  curr === this.props.group ||
+                  this.turretMgr.slots.some((s) => curr === s.group)
+                ) {
+                  cat = 'buildings';
+                  break;
+                }
+                if (
+                  curr === this.unlockSystem.pads[0]?.group ||
+                  curr === this.unlockSystem.pads[1]?.group
+                ) {
+                  cat = 'ui_labels';
+                  break;
+                }
+                curr = curr.parent;
               }
-              if (curr === this.baseFort.group) {
-                cat = 'fence';
-                break;
-              }
-              if (curr === this.trees.group) {
-                cat = 'trees';
-                break;
-              }
-              if (
-                curr === this.sawmill.group ||
-                curr === this.smokehouse.group ||
-                curr === this.mineRail.group ||
-                curr === this.customerQueue.group ||
-                curr === this.props.group ||
-                this.turretMgr.slots.some((s) => curr === s.group)
-              ) {
-                cat = 'buildings';
-                break;
-              }
-              if (
-                curr === this.unlockSystem.pads[0]?.group ||
-                curr === this.unlockSystem.pads[1]?.group
-              ) {
-                cat = 'ui_labels';
-                break;
-              }
-              if (curr.name === 'particles') {
-                cat = 'particles';
-                break;
-              }
-              curr = curr.parent;
             }
             if (cat === 'other') {
               for (const e of this.enemyMgr.enemies) {
@@ -554,7 +577,7 @@ export class FrostboundGame {
       if (this.enemyMgr.kills >= this.nextBossKillThreshold) {
         this.nextBossKillThreshold += 10;
         this.enemyMgr.spawnEnemy('boss', 0, -15.5);
-        this.hud.showBanner('⚠️ BOSS POLAR BEAR APPROACHING!');
+        this.hud.showBanner('BOSS POLAR BEAR APPROACHING!', 3.5, 'warning');
       }
 
       this.turretMgr.update(
@@ -638,7 +661,7 @@ export class FrostboundGame {
         this.engine.sunLight,
         this.engine.hemiLight,
         this.randomEvents.auroraTimer > 0,
-        () => this.hud.showBanner('❄️ BLIZZARD! Stay near Campfire!'),
+        () => this.hud.showBanner('BLIZZARD! Stay near Campfire!', 3.5, 'frost'),
       );
       this.environment.update(dt, this.player.position.x, this.player.position.z);
 

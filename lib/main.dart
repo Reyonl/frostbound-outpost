@@ -9,7 +9,10 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-  SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
   runApp(const FrostboundApp());
 }
 
@@ -40,6 +43,9 @@ ContentType contentTypeForAsset(String path) {
   if (lower.endsWith('.png')) return ContentType('image', 'png');
   if (lower.endsWith('.webp')) return ContentType('image', 'webp');
   if (lower.endsWith('.wasm')) return ContentType('application', 'wasm');
+  if (lower.endsWith('.woff2')) return ContentType('font', 'woff2');
+  if (lower.endsWith('.woff')) return ContentType('font', 'woff');
+  if (lower.endsWith('.ttf')) return ContentType('font', 'ttf');
   return ContentType.binary;
 }
 

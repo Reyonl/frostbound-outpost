@@ -70,6 +70,10 @@ def capture(name: str, width: int = 390, height: int = 844, dpr: float = 2.0, wa
         time.sleep(wait_sec)
         driver.save_screenshot(str(out_path))
 
+        brain_evidence_dir = Path(r"C:\Users\ThinkPad\.gemini\antigravity\brain\7baa4ddd-5634-4f6b-bae9-38cf9b6617b1\evidence")
+        brain_evidence_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(out_path, brain_evidence_dir / f"{name}.png")
+
         state = driver.execute_script("return window.__frostboundDebug ? window.__frostboundDebug.getState() : {};")
 
         # Check console logs for errors

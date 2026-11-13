@@ -44,6 +44,7 @@ export class EnvironmentSystem {
     });
 
     this.snowPoints = new THREE.Points(geo, mat);
+    this.snowPoints.name = 'particles_snow';
     scene.add(this.snowPoints);
   }
 
