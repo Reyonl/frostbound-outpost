@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GAME_CONFIG } from '../config/gameConfig';
+import type { GraphicsQuality } from '../core/QualitySettings';
 import type { CarryType, StackSystem } from '../systems/StackSystem';
 import type { AudioSynth } from '../core/AudioSynth';
 import { triggerHaptic } from '../core/Haptics';
@@ -25,6 +26,7 @@ export class Station {
 
   private readonly ringMesh: THREE.Mesh;
   private readonly activeSpinner: THREE.Mesh;
+  private awning?: THREE.Mesh;
   private readonly outputVisuals: THREE.Mesh[] = [];
   private readonly badgeCanvas: HTMLCanvasElement;
   private readonly badgeCtx: CanvasRenderingContext2D;
@@ -65,10 +67,10 @@ export class Station {
       this.group.add(saw);
       this.activeSpinner = saw;
 
-      const awning = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.16, 1.7), roofMat);
-      awning.position.set(0, 1.55, 0);
-      awning.castShadow = true;
-      this.group.add(awning);
+      this.awning = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.16, 1.7), roofMat);
+      this.awning.position.set(0, 1.55, 0);
+      this.awning.castShadow = true;
+      this.group.add(this.awning);
     } else {
       const smoker = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.2, 1.0), roofMat);
       smoker.position.set(-0.4, 0.9, 0);
@@ -132,6 +134,10 @@ export class Station {
     badgePlane.position.set(config.dropOffset.x, 0.095, config.dropOffset.z);
     this.group.add(badgePlane);
     this.redrawBadge();
+  }
+
+  applyQuality(quality: GraphicsQuality): void {
+    if (this.awning) this.awning.visible = quality === 'high';
   }
 
   private redrawBadge(): void {

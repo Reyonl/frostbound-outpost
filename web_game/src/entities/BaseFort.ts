@@ -21,6 +21,9 @@ export class BaseFort {
   fenceLevel = 1;
   private fireTime = 0;
   private quality: GraphicsQuality = 'high';
+  private stoneMesh!: THREE.InstancedMesh;
+  private logMesh!: THREE.InstancedMesh;
+  private tipMesh!: THREE.InstancedMesh;
 
   constructor(scene: THREE.Scene) {
     scene.add(this.group);
@@ -29,9 +32,9 @@ export class BaseFort {
     // Central Campfire Hearth (Instanced stones to minimize draw calls)
     const stoneMat = new THREE.MeshToonMaterial({ color: 0x64748b });
     const stoneGeo = new THREE.DodecahedronGeometry(0.24, 0);
-    const stoneMesh = new THREE.InstancedMesh(stoneGeo, stoneMat, 8);
-    stoneMesh.castShadow = true;
-    stoneMesh.receiveShadow = true;
+    this.stoneMesh = new THREE.InstancedMesh(stoneGeo, stoneMat, 8);
+    this.stoneMesh.castShadow = true;
+    this.stoneMesh.receiveShadow = true;
     const dummy = new THREE.Object3D();
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2;
@@ -42,19 +45,25 @@ export class BaseFort {
       );
       dummy.rotation.set(0.2, a, 0.1);
       dummy.updateMatrix();
-      stoneMesh.setMatrixAt(i, dummy.matrix);
+      this.stoneMesh.setMatrixAt(i, dummy.matrix);
     }
-    stoneMesh.instanceMatrix.needsUpdate = true;
-    this.group.add(stoneMesh);
+    this.stoneMesh.instanceMatrix.needsUpdate = true;
+    this.group.add(this.stoneMesh);
 
+    // Instanced campfire logs
     const logMat = new THREE.MeshToonMaterial({ color: 0x5c3317 });
+    const logGeo = new THREE.CylinderGeometry(0.12, 0.12, 1.1, 6);
+    this.logMesh = new THREE.InstancedMesh(logGeo, logMat, 2);
+    this.logMesh.castShadow = true;
+    this.logMesh.receiveShadow = true;
     for (let i = 0; i < 2; i++) {
-      const log = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.1, 6), logMat);
-      log.position.set(this.campfirePos.x, 0.16, this.campfirePos.z);
-      log.rotation.z = Math.PI / 2;
-      log.rotation.y = i === 0 ? 0.6 : -0.6;
-      this.group.add(log);
+      dummy.position.set(this.campfirePos.x, 0.16, this.campfirePos.z);
+      dummy.rotation.set(0, i === 0 ? 0.6 : -0.6, Math.PI / 2);
+      dummy.updateMatrix();
+      this.logMesh.setMatrixAt(i, dummy.matrix);
     }
+    this.logMesh.instanceMatrix.needsUpdate = true;
+    this.group.add(this.logMesh);
 
     this.flameOuter = new THREE.Mesh(
       new THREE.ConeGeometry(0.38, 1.05, 7),
@@ -153,13 +162,13 @@ export class BaseFort {
 
   applyQuality(quality: GraphicsQuality): void {
     this.quality = quality;
-    if (quality === 'high') {
-      this.glowSprite.visible = true;
-      this.emberPoints.visible = true;
-    } else {
-      this.glowSprite.visible = false;
-      this.emberPoints.visible = false;
-    }
+    const isHigh = quality === 'high';
+    this.glowSprite.visible = isHigh;
+    this.emberPoints.visible = isHigh;
+    if (this.tipMesh) this.tipMesh.visible = isHigh;
+    if (this.stoneMesh) this.stoneMesh.visible = isHigh;
+    if (this.logMesh) this.logMesh.visible = isHigh;
+    if (this.flameInner) this.flameInner.visible = isHigh;
   }
 
   private buildPalisade(): void {
@@ -171,7 +180,7 @@ export class BaseFort {
     const snowMat = new THREE.MeshToonMaterial({ color: 0xf1f5f9 });
 
     const postMesh = new THREE.InstancedMesh(postGeo, postMat, postCount);
-    const tipMesh = new THREE.InstancedMesh(tipGeo, snowMat, postCount);
+    this.tipMesh = new THREE.InstancedMesh(tipGeo, snowMat, postCount);
     postMesh.castShadow = true;
     postMesh.receiveShadow = true;
 
@@ -196,15 +205,15 @@ export class BaseFort {
 
       dummy.position.set(x, 1.5, z);
       dummy.updateMatrix();
-      tipMesh.setMatrixAt(placed, dummy.matrix);
+      this.tipMesh.setMatrixAt(placed, dummy.matrix);
       placed++;
     }
 
     postMesh.count = placed;
-    tipMesh.count = placed;
-    this.group.add(postMesh, tipMesh);
+    this.tipMesh.count = placed;
+    this.group.add(postMesh, this.tipMesh);
 
-    // Decorative red gate posts at North & South entrances (will be overhauled in G3)
+    // Instanced gate posts at North & South entrances (saves 6 draw calls)
     const gatePostMat = new THREE.MeshToonMaterial({ color: 0xb91c1c });
     const gateCoords: [number, number][] = [
       [-1.95, r - 0.15],
@@ -212,12 +221,21 @@ export class BaseFort {
       [-1.95, -r + 0.15],
       [1.95, -r + 0.15],
     ];
-    for (const [gx, gz] of gateCoords) {
-      const gp = new THREE.Mesh(new THREE.BoxGeometry(0.45, 1.75, 0.45), gatePostMat);
-      gp.position.set(gx, 0.87, gz);
-      gp.castShadow = true;
-      this.group.add(gp);
+    const gateMesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(0.45, 1.75, 0.45),
+      gatePostMat,
+      gateCoords.length,
+    );
+    gateMesh.castShadow = true;
+    gateMesh.receiveShadow = true;
+    for (let i = 0; i < gateCoords.length; i++) {
+      dummy.position.set(gateCoords[i][0], 0.87, gateCoords[i][1]);
+      dummy.rotation.set(0, 0, 0);
+      dummy.updateMatrix();
+      gateMesh.setMatrixAt(i, dummy.matrix);
     }
+    gateMesh.instanceMatrix.needsUpdate = true;
+    this.group.add(gateMesh);
   }
 
   upgradeFence(): void {

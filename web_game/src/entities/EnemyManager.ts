@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GAME_CONFIG } from '../config/gameConfig';
+import type { GraphicsQuality } from '../core/QualitySettings';
 
 export type EnemyKind = 'bear' | 'wolf' | 'elite' | 'boss';
 
@@ -33,6 +34,7 @@ export class EnemyManager {
   private spawnTimer = 2.0;
   waveLevel = 1;
   kills = 0;
+  private currentQuality: GraphicsQuality = 'high';
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -42,12 +44,28 @@ export class EnemyManager {
     this.spawnEnemy('wolf', 10.5, 4.0);
   }
 
+  applyQuality(quality: GraphicsQuality): void {
+    this.currentQuality = quality;
+    const isHigh = quality === 'high';
+    for (const e of this.enemies) {
+      e.group.traverse((obj) => {
+        if (obj.name === 'enemy_detail') {
+          obj.visible = isHigh;
+        }
+        if (obj.name === 'enemy_bar') {
+          obj.visible = isHigh || e.hp < e.maxHp || e.kind === 'boss' || e.kind === 'elite';
+        }
+      });
+    }
+  }
+
   private buildEnemyMesh(kind: EnemyKind): {
     group: THREE.Group;
     hpBarFill: THREE.Mesh;
     telegraphRing?: THREE.Mesh;
   } {
     const group = new THREE.Group();
+    group.name = 'characters';
     const isWolf = kind === 'wolf';
     const isElite = kind === 'elite';
     const isBoss = kind === 'boss';
@@ -68,7 +86,9 @@ export class EnemyManager {
     group.add(head);
 
     const snout = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.24, 0.28), darkMat);
+    snout.name = 'enemy_detail';
     snout.position.set(0, 0.72, 1.16);
+    snout.visible = this.currentQuality === 'high';
     group.add(snout);
 
     // Ears or horns for elite/boss
@@ -76,7 +96,9 @@ export class EnemyManager {
     const earGeo = isElite || isBoss ? new THREE.ConeGeometry(0.12, 0.42, 5) : new THREE.BoxGeometry(0.16, 0.16, 0.12);
     for (const sx of [-0.24, 0.24]) {
       const ear = new THREE.Mesh(earGeo, earMat);
+      ear.name = 'enemy_detail';
       ear.position.set(sx, 1.15, 0.76);
+      ear.visible = this.currentQuality === 'high';
       group.add(ear);
     }
 
@@ -89,8 +111,10 @@ export class EnemyManager {
       [0.32, -0.46],
     ]) {
       const leg = new THREE.Mesh(legGeo, coatMat);
+      leg.name = 'enemy_detail';
       leg.position.set(lx, 0.2, lz);
       leg.castShadow = true;
+      leg.visible = this.currentQuality === 'high';
       group.add(leg);
     }
 
@@ -101,22 +125,24 @@ export class EnemyManager {
       new THREE.BoxGeometry(1.15, 0.13, 0.06),
       new THREE.MeshBasicMaterial({ color: 0x0f172a }),
     );
+    barBg.name = 'enemy_bar';
     barBg.position.set(0, 1.55, 0);
+    barBg.visible = this.currentQuality === 'high' || isBoss || isElite;
     group.add(barBg);
 
     const hpBarFill = new THREE.Mesh(
       new THREE.BoxGeometry(1.08, 0.08, 0.08),
       new THREE.MeshBasicMaterial({ color: isBoss || isElite ? 0xf59e0b : 0xef4444 }),
     );
+    hpBarFill.name = 'enemy_bar';
     hpBarFill.position.set(0, 1.55, 0.01);
+    hpBarFill.visible = this.currentQuality === 'high' || isBoss || isElite;
     group.add(hpBarFill);
 
     let telegraphRing: THREE.Mesh | undefined;
     if (isElite || isBoss) {
-      const ringGeo = new THREE.RingGeometry(0.95, 1.22, 24);
-      ringGeo.rotateX(-Math.PI / 2);
       telegraphRing = new THREE.Mesh(
-        ringGeo,
+        new THREE.RingGeometry(0.8, 1.35, 24),
         new THREE.MeshBasicMaterial({
           color: 0xef4444,
           transparent: true,
@@ -185,7 +211,7 @@ export class EnemyManager {
       attackCooldown: 0,
       axeHitCooldown: 0,
       flashTimer: 0,
-      chargeTimer: 3.5,
+      chargeTimer: 0,
       charging: false,
       alive: true,
     };
@@ -193,110 +219,148 @@ export class EnemyManager {
     return enemy;
   }
 
-  spawnWavePerimeter(isBlizzard = false): void {
-    const aliveCount = this.enemies.length;
-    const cap = isBlizzard ? 11 : 7;
-    if (aliveCount >= cap) return;
-
-    const angle = Math.random() * Math.PI * 2;
-    const dist = 16 + Math.random() * 8;
-    const x = Math.cos(angle) * dist;
-    const z = Math.sin(angle) * dist;
-
-    const roll = Math.random();
-    const kind: EnemyKind =
-      roll < 0.16 && this.waveLevel >= 2 ? 'elite' : roll < 0.48 ? 'wolf' : 'bear';
-    this.spawnEnemy(kind, x, z);
-  }
-
   update(
     dt: number,
     playerPos: THREE.Vector3,
-    isBlizzard: boolean,
-    onAttackPlayer: (dmg: number) => void,
-    onAttackGate: (dmg: number) => void,
+    blizzardActive: boolean,
+    onAttackPlayer: (damage: number) => void,
+    onAttackGate: (damage: number) => void,
   ): void {
-    this.spawnTimer -= dt * (isBlizzard ? 1.7 : 1.0);
-    if (this.spawnTimer <= 0) {
-      this.spawnTimer = Math.max(2.2, 5.2 - this.waveLevel * 0.35);
-      this.spawnWavePerimeter(isBlizzard);
+    // Spawn pacing
+    this.spawnTimer -= dt;
+    const maxActive = Math.min(8, 3 + Math.floor(this.waveLevel * 0.8));
+    if (this.spawnTimer <= 0 && this.enemies.filter((e) => e.alive).length < maxActive) {
+      this.spawnTimer = Math.max(2.4, 5.0 - this.waveLevel * 0.35);
+      const angle = Math.random() * Math.PI * 2;
+      const dist = GAME_CONFIG.world.baseRadius + 5.5 + Math.random() * 8;
+      const ex = Math.cos(angle) * dist;
+      const ez = Math.sin(angle) * dist;
+      const isWolf = Math.random() < 0.45;
+      this.spawnEnemy(isWolf ? 'wolf' : 'bear', ex, ez);
     }
 
-    for (let i = this.enemies.length - 1; i >= 0; i--) {
-      const e = this.enemies[i];
-      if (!e.alive) {
-        this.scene.remove(e.group);
-        this.enemies.splice(i, 1);
-        continue;
-      }
+    const speedBuff = blizzardActive ? 1.25 : 1.0;
+    const baseR = GAME_CONFIG.world.baseRadius;
 
-      if (e.axeHitCooldown > 0) e.axeHitCooldown = Math.max(0, e.axeHitCooldown - dt);
-      if (e.attackCooldown > 0) e.attackCooldown = Math.max(0, e.attackCooldown - dt);
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+
+      e.attackCooldown = Math.max(0, e.attackCooldown - dt);
+      e.axeHitCooldown = Math.max(0, e.axeHitCooldown - dt);
       if (e.flashTimer > 0) {
         e.flashTimer = Math.max(0, e.flashTimer - dt);
-        const s = e.kind === 'boss' ? 1.85 : e.kind === 'elite' ? 1.32 : e.kind === 'wolf' ? 0.82 : 1;
-        e.group.scale.setScalar(s * (e.flashTimer > 0 ? 1.12 : 1));
-      }
-
-      const distPlayer = Math.hypot(playerPos.x - e.group.position.x, playerPos.z - e.group.position.z);
-      const distCenter = Math.hypot(e.group.position.x, e.group.position.z);
-
-      // Telegraph lunge for Elite & Boss enemies
-      let moveMult = 1;
-      if (e.telegraphRing && (e.kind === 'elite' || e.kind === 'boss')) {
-        e.chargeTimer -= dt;
-        const mat = e.telegraphRing.material as THREE.MeshBasicMaterial;
-        if (e.chargeTimer <= 1.0 && e.chargeTimer > 0) {
-          e.charging = true;
-          moveMult = 0.2;
-          mat.opacity = 0.72;
-          e.telegraphRing.scale.setScalar(1 + (1 - e.chargeTimer) * 0.55);
-        } else if (e.chargeTimer <= 0) {
-          e.charging = false;
-          moveMult = 2.6;
-          mat.opacity = 0;
-          if (e.chargeTimer <= -0.45) {
-            e.chargeTimer = 4.2;
-          }
-        } else {
-          mat.opacity = 0;
+        if (e.flashTimer === 0) {
+          e.group.traverse((c) => {
+            if ((c as THREE.Mesh).isMesh && c !== e.hpBarFill && c !== e.telegraphRing) {
+              const m = (c as THREE.Mesh).material as THREE.MeshToonMaterial;
+              if (m && 'color' in m) {
+                const hex = e.kind === 'wolf' ? 0x94a3b8 : e.kind === 'boss' ? 0xf1f5f9 : 0xf8fafc;
+                m.color.setHex(hex);
+              }
+            }
+          });
         }
       }
 
-      // Target player if within aggro radius (11m), otherwise pressure base palisade gate
-      const targetX = distPlayer < 11 ? playerPos.x : 0;
-      const targetZ = distPlayer < 11 ? playerPos.z : -GAME_CONFIG.world.baseRadius;
+      // Target selection: player if outside or near gate, otherwise gate
+      const distPlayer = Math.hypot(playerPos.x - e.group.position.x, playerPos.z - e.group.position.z);
+      const distFromCenter = Math.hypot(e.group.position.x, e.group.position.z);
+
+      let targetX = playerPos.x;
+      let targetZ = playerPos.z;
+
+      // If player is deep inside base, enemies converge on nearest gate entrance
+      if (distFromCenter > baseR + 0.4 && Math.hypot(playerPos.x, playerPos.z) < baseR - 1.2) {
+        // Nearest gate (South or North)
+        targetX = 0;
+        targetZ = e.group.position.z > 0 ? baseR : -baseR;
+      }
+
       const dx = targetX - e.group.position.x;
       const dz = targetZ - e.group.position.z;
       const d = Math.hypot(dx, dz) || 1;
 
-      if (d > e.radius + 0.55) {
-        e.group.position.x += ((dx / d) * e.speed * moveMult + e.vx) * dt;
-        e.group.position.z += ((dz / d) * e.speed * moveMult + e.vz) * dt;
-        e.group.rotation.y = Math.atan2(dx, dz);
-      }
-
-      // Knockback decay
-      e.vx *= Math.exp(-9 * dt);
-      e.vz *= Math.exp(-9 * dt);
-
-      // Prevent enemies from walking through solid base perimeter except if close to gate
-      const newDistCenter = Math.hypot(e.group.position.x, e.group.position.z);
-      if (newDistCenter < GAME_CONFIG.world.baseRadius + 0.35 && distCenter >= GAME_CONFIG.world.baseRadius - 0.1) {
-        if (e.attackCooldown <= 0) {
-          e.attackCooldown = 1.1;
-          onAttackGate(e.damage * 0.65);
+      // Charge attack for Elite & Boss
+      if (e.kind === 'elite' || e.kind === 'boss') {
+        e.chargeTimer += dt;
+        if (e.chargeTimer >= 4.2 && !e.charging) {
+          e.charging = true;
+          e.chargeTimer = 0;
+          if (e.telegraphRing) {
+            (e.telegraphRing.material as THREE.MeshBasicMaterial).opacity = 0.75;
+          }
         }
       }
 
-      if (distPlayer <= e.radius + 0.7 && e.attackCooldown <= 0) {
-        e.attackCooldown = 1.05;
+      const curSpeed = (e.charging ? e.speed * 2.1 : e.speed) * speedBuff;
+      e.vx = (dx / d) * curSpeed;
+      e.vz = (dz / d) * curSpeed;
+
+      e.group.position.x += e.vx * dt;
+      e.group.position.z += e.vz * dt;
+      e.group.rotation.y = Math.atan2(e.vx, e.vz);
+
+      // Attack player check
+      if (distPlayer <= e.radius + 0.55 && e.attackCooldown <= 0) {
+        e.attackCooldown = 0.95;
         onAttackPlayer(e.damage);
+        if (e.charging) {
+          e.charging = false;
+          if (e.telegraphRing) {
+            (e.telegraphRing.material as THREE.MeshBasicMaterial).opacity = 0.0;
+          }
+        }
       }
 
-      const ratio = Math.max(0.02, e.hp / e.maxHp);
+      // Attack gate if close to perimeter and blocked
+      if (Math.abs(distFromCenter - baseR) < 0.8 && e.attackCooldown <= 0 && distPlayer > 2.8) {
+        e.attackCooldown = 1.1;
+        onAttackGate(e.damage * 0.75);
+      }
+
+      // Update HP bar visual
+      const ratio = Math.max(0.01, e.hp / Math.max(1, e.maxHp));
       e.hpBarFill.scale.x = ratio;
       e.hpBarFill.position.x = -(1 - ratio) * 0.54;
     }
+  }
+
+  takeDamage(
+    enemy: Enemy,
+    damage: number,
+    onDied: (e: Enemy) => void,
+  ): boolean {
+    if (!enemy.alive) return false;
+
+    enemy.hp = Math.max(0, enemy.hp - damage);
+    if (this.currentQuality === 'low') {
+      enemy.group.traverse((obj) => {
+        if (obj.name === 'enemy_bar') obj.visible = true;
+      });
+    }
+    enemy.flashTimer = 0.12;
+
+    // Red hit flash
+    enemy.group.traverse((c) => {
+      if ((c as THREE.Mesh).isMesh && c !== enemy.hpBarFill && c !== enemy.telegraphRing) {
+        const m = (c as THREE.Mesh).material as THREE.MeshToonMaterial;
+        if (m && 'color' in m) {
+          m.color.setHex(0xef4444);
+        }
+      }
+    });
+
+    if (enemy.hp <= 0) {
+      enemy.alive = false;
+      this.kills += 1;
+      this.scene.remove(enemy.group);
+      const idx = this.enemies.indexOf(enemy);
+      if (idx !== -1) {
+        this.enemies.splice(idx, 1);
+      }
+      onDied(enemy);
+      return true;
+    }
+    return false;
   }
 }

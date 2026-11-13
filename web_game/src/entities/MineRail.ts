@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GAME_CONFIG } from '../config/gameConfig';
 import type { ParticleSystem } from '../systems/ParticleSystem';
 
@@ -69,8 +70,10 @@ export class MineRail {
 
     const railCurveL = new THREE.CatmullRomCurve3(railPointsL, true);
     const railCurveR = new THREE.CatmullRomCurve3(railPointsR, true);
-    this.group.add(new THREE.Mesh(new THREE.TubeGeometry(railCurveL, 64, 0.045, 5, true), railMat));
-    this.group.add(new THREE.Mesh(new THREE.TubeGeometry(railCurveR, 64, 0.045, 5, true), railMat));
+    const geoL = new THREE.TubeGeometry(railCurveL, 64, 0.045, 5, true);
+    const geoR = new THREE.TubeGeometry(railCurveR, 64, 0.045, 5, true);
+    const mergedRails = mergeGeometries([geoL, geoR]);
+    this.group.add(new THREE.Mesh(mergedRails || geoL, railMat));
 
     // Gold Ore Vein at the far end of the rail
     const vein = new THREE.Mesh(
@@ -121,6 +124,7 @@ export class MineRail {
       this.cartGoldBars.push(b);
     }
     this.group.add(this.cartGroup);
+    this.group.visible = this.unlocked;
   }
 
   update(

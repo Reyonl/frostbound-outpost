@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GAME_CONFIG } from '../config/gameConfig';
 import { ObjectPool } from '../core/ObjectPool';
+import type { GraphicsQuality } from '../core/QualitySettings';
 import type { AudioSynth } from '../core/AudioSynth';
 import type { Enemy, EnemyManager } from './EnemyManager';
 import type { ParticleSystem } from '../systems/ParticleSystem';
@@ -47,6 +48,7 @@ export class TurretManager {
       group.position.set(def.x, 0, def.z);
 
       const plinth = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.45, 1.15), stoneMat);
+      plinth.name = 'turret_detail';
       plinth.position.y = 0.22;
       plinth.castShadow = true;
       group.add(plinth);
@@ -98,6 +100,17 @@ export class TurretManager {
     if (slot) {
       slot.unlocked = true;
       slot.group.visible = true;
+    }
+  }
+
+  applyQuality(quality: GraphicsQuality): void {
+    const isHigh = quality === 'high';
+    for (const s of this.slots) {
+      s.group.traverse((obj) => {
+        if (obj.name === 'turret_detail') {
+          obj.visible = isHigh;
+        }
+      });
     }
   }
 

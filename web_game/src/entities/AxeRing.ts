@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GAME_CONFIG } from '../config/gameConfig';
+import type { GraphicsQuality } from '../core/QualitySettings';
 
 export class AxeRing {
   readonly group = new THREE.Group();
@@ -35,6 +36,10 @@ export class AxeRing {
     this.group.add(this.slashRing);
 
     this.rebuildAxes();
+  }
+
+  applyQuality(quality: GraphicsQuality): void {
+    this.slashRing.visible = quality === 'high';
   }
 
   setCount(nextCount: number): void {

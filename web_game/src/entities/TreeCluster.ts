@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GAME_CONFIG } from '../config/gameConfig';
+import type { GraphicsQuality } from '../core/QualitySettings';
 
 export interface TreeNode {
   id: number;
@@ -36,6 +37,7 @@ export function isValidTreePlacement(
 
 export class TreeCluster {
   readonly trees: TreeNode[] = [];
+  readonly group = new THREE.Group();
 
   private readonly trunkMesh: THREE.InstancedMesh;
   private readonly lowerConeMesh: THREE.InstancedMesh;
@@ -44,6 +46,7 @@ export class TreeCluster {
   private readonly dummy = new THREE.Object3D();
 
   constructor(scene: THREE.Scene) {
+    this.group.name = 'trees';
     const count = GAME_CONFIG.forest.treeCount;
 
     // Deterministic seeded-like spread so forest looks balanced on every run
@@ -61,12 +64,14 @@ export class TreeCluster {
       const z = (rand() * 2 - 1) * maxExtent;
       if (!isValidTreePlacement(x, z, this.trees)) continue;
 
+      const scale = 0.82 + rand() * 0.45;
+      const rotY = rand() * Math.PI * 2;
       this.trees.push({
         id: this.trees.length,
         x,
         z,
-        scale: 0.85 + rand() * 0.42,
-        rotY: rand() * Math.PI * 2,
+        scale,
+        rotY,
         hp: GAME_CONFIG.forest.treeMaxHp,
         maxHp: GAME_CONFIG.forest.treeMaxHp,
         alive: true,
@@ -76,7 +81,7 @@ export class TreeCluster {
     }
 
     const n = this.trees.length;
-    const trunkGeo = new THREE.CylinderGeometry(0.18, 0.28, 1.0, 6);
+    const trunkGeo = new THREE.CylinderGeometry(0.18, 0.28, 1.0, 5);
     trunkGeo.translate(0, 0.5, 0);
     const trunkMat = new THREE.MeshToonMaterial({ color: 0x7c4a27 });
     this.trunkMesh = new THREE.InstancedMesh(trunkGeo, trunkMat, n);
@@ -100,14 +105,20 @@ export class TreeCluster {
     const snowMat = new THREE.MeshToonMaterial({ color: 0xf1f7ff });
     this.snowCapMesh = new THREE.InstancedMesh(capGeo, snowMat, n);
 
-    scene.add(this.trunkMesh, this.lowerConeMesh, this.upperConeMesh, this.snowCapMesh);
+    this.group.add(this.trunkMesh, this.lowerConeMesh, this.upperConeMesh, this.snowCapMesh);
+    scene.add(this.group);
     this.syncAllMatrices();
+  }
+
+  applyQuality(quality: GraphicsQuality): void {
+    const isHigh = quality === 'high';
+    this.snowCapMesh.visible = isHigh;
+    this.upperConeMesh.visible = isHigh;
   }
 
   private syncTreeMatrix(tree: TreeNode): void {
     const idx = tree.id;
     if (!tree.alive) {
-      // Show tiny sapling stump while regrowing
       const progress = 1 - Math.max(0, tree.regrowTimer) / GAME_CONFIG.forest.regrowSeconds;
       this.dummy.position.set(tree.x, 0, tree.z);
       this.dummy.rotation.set(0, tree.rotY, 0);

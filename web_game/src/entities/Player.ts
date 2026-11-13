@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GAME_CONFIG } from '../config/gameConfig';
+import type { GraphicsQuality } from '../core/QualitySettings';
 import type { MoveVector } from '../systems/InputSystem';
 
 export class Player {
@@ -12,6 +13,9 @@ export class Player {
   private readonly leftArm: THREE.Mesh;
   private readonly rightArm: THREE.Mesh;
   private readonly groundRing: THREE.Mesh;
+  private hem!: THREE.Mesh;
+  private collar!: THREE.Mesh;
+  private goggles!: THREE.Mesh;
 
   private walkPhase = 0;
   private facingYaw = 0;
@@ -57,14 +61,14 @@ export class Player {
     this.bodyGroup.add(torso);
 
     // White fur trim hem & collar
-    const hem = new THREE.Mesh(new THREE.CylinderGeometry(0.43, 0.44, 0.1, 10), furMat);
-    hem.position.y = 0.4;
-    this.bodyGroup.add(hem);
+    this.hem = new THREE.Mesh(new THREE.CylinderGeometry(0.43, 0.44, 0.1, 10), furMat);
+    this.hem.position.y = 0.4;
+    this.bodyGroup.add(this.hem);
 
-    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.08, 6, 12), furMat);
-    collar.rotation.x = Math.PI / 2;
-    collar.position.y = 1.08;
-    this.bodyGroup.add(collar);
+    this.collar = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.08, 6, 12), furMat);
+    this.collar.rotation.x = Math.PI / 2;
+    this.collar.position.y = 1.08;
+    this.bodyGroup.add(this.collar);
 
     // Backpack frame (where stack sits in M2)
     const pack = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.44, 0.22), darkMat);
@@ -82,12 +86,12 @@ export class Player {
     face.position.set(0, 1.31, 0.14);
     this.bodyGroup.add(face);
 
-    const goggles = new THREE.Mesh(
+    this.goggles = new THREE.Mesh(
       new THREE.BoxGeometry(0.32, 0.11, 0.1),
       new THREE.MeshToonMaterial({ color: 0x0f172a }),
     );
-    goggles.position.set(0, 1.38, 0.3);
-    this.bodyGroup.add(goggles);
+    this.goggles.position.set(0, 1.38, 0.3);
+    this.bodyGroup.add(this.goggles);
 
     // Arms
     const armGeo = new THREE.CapsuleGeometry(0.09, 0.28, 4, 8);
@@ -104,6 +108,14 @@ export class Player {
     this.group.add(this.bodyGroup);
     this.group.position.set(0, 0, 2.2);
     scene.add(this.group);
+  }
+
+  applyQuality(quality: GraphicsQuality): void {
+    const isHigh = quality === 'high';
+    if (this.hem) this.hem.visible = isHigh;
+    if (this.collar) this.collar.visible = isHigh;
+    if (this.goggles) this.goggles.visible = isHigh;
+    if (this.groundRing) this.groundRing.visible = isHigh;
   }
 
   update(move: MoveVector, dt: number): void {

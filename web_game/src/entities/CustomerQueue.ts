@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { GraphicsQuality } from '../core/QualitySettings';
 import type { ResourceCounts } from '../ui/HUD';
 import type { AudioSynth } from '../core/AudioSynth';
 import { triggerHaptic } from '../core/Haptics';
@@ -12,12 +13,10 @@ interface CounterLane {
   dropPos: THREE.Vector3;
   cashPilePos: THREE.Vector3;
   ringMesh: THREE.Mesh;
-  billMeshes: THREE.Mesh[];
   cashPileAmount: number;
   needed: number;
   delivered: number;
   rewardPerUnit: number;
-  queueMeshes: THREE.Group[];
   bubbleEl: HTMLDivElement;
   serveCooldown: number;
   magnetCooldown: number;
@@ -29,35 +28,97 @@ const LANE_DEFS: { kind: CarryType; x: number; icon: string; minNeed: number; ma
   { kind: 'gold', x: 2.4, icon: '🪙', minNeed: 2, maxNeed: 4, pay: 12 },
 ];
 
+// 6 distinct Nordic coat colors for survivors
+export const SURVIVOR_COAT_COLORS = [
+  0x0284c7, // Slate Teal
+  0x16a34a, // Forest Green
+  0xd97706, // Ochre Gold
+  0x9333ea, // Plum Purple
+  0x0284c7, // Sky Blue
+  0xb91c1c, // Rust Crimson
+];
+
 export function computeOrderTotal(needed: number, rewardPerUnit: number): number {
   return needed * rewardPerUnit;
 }
 
 export class CustomerQueue {
   readonly lanes: CounterLane[] = [];
+  readonly group = new THREE.Group();
   private readonly bubbleLayer: HTMLDivElement;
   private readonly projVec = new THREE.Vector3();
   ordersCompleted = 0;
 
+  // Instanced Meshes for massive draw-call savings (9 NPCs + counters + bills)
+  readonly counterInstancedMesh: THREE.InstancedMesh;
+  readonly billInstancedMesh: THREE.InstancedMesh;
+  readonly npcCoatMesh: THREE.InstancedMesh;
+  readonly npcHoodMesh: THREE.InstancedMesh;
+  readonly npcFaceMesh: THREE.InstancedMesh;
+  private readonly dummy = new THREE.Object3D();
+
   constructor(scene: THREE.Scene, hudRoot: HTMLElement) {
+    this.group.name = 'customer_queue';
+    scene.add(this.group);
+
     this.bubbleLayer = document.createElement('div');
     this.bubbleLayer.className = 'bubble-layer';
     hudRoot.appendChild(this.bubbleLayer);
 
+    // 1. Instanced Counter Benches (3 lanes merged into 1 draw call)
     const benchMat = new THREE.MeshToonMaterial({ color: 0xb45309 });
+    const benchGeo = new THREE.BoxGeometry(1.75, 0.72, 0.8);
+    this.counterInstancedMesh = new THREE.InstancedMesh(benchGeo, benchMat, LANE_DEFS.length);
+    this.counterInstancedMesh.castShadow = true;
+    this.counterInstancedMesh.receiveShadow = true;
+
+    for (let i = 0; i < LANE_DEFS.length; i++) {
+      this.dummy.position.set(LANE_DEFS[i].x, 0.36, 5.0);
+      this.dummy.rotation.set(0, 0, 0);
+      this.dummy.updateMatrix();
+      this.counterInstancedMesh.setMatrixAt(i, this.dummy.matrix);
+    }
+    this.counterInstancedMesh.instanceMatrix.needsUpdate = true;
+    this.group.add(this.counterInstancedMesh);
+
+    // 2. Instanced Cash Bills (up to 72 bills across 3 lanes merged into 1 draw call)
     const billGeo = new THREE.BoxGeometry(0.42, 0.08, 0.24);
     const billMat = new THREE.MeshToonMaterial({ color: 0x22c55e });
+    this.billInstancedMesh = new THREE.InstancedMesh(billGeo, billMat, 72);
+    this.billInstancedMesh.castShadow = true;
+    this.billInstancedMesh.count = 0; // 0 draw calls when no bills!
+    this.group.add(this.billInstancedMesh);
+
+    // 3. Instanced Survivor NPCs (9 NPCs merged into 3 draw calls)
+    const coatGeo = new THREE.CylinderGeometry(0.24, 0.34, 0.62, 8);
+    const coatMat = new THREE.MeshToonMaterial({ color: 0xffffff }); // Tinted via instanceColor
+    this.npcCoatMesh = new THREE.InstancedMesh(coatGeo, coatMat, 9);
+    this.npcCoatMesh.castShadow = true;
+
+    const hoodGeo = new THREE.SphereGeometry(0.25, 8, 8);
+    const hoodMat = new THREE.MeshToonMaterial({ color: 0x334155 });
+    this.npcHoodMesh = new THREE.InstancedMesh(hoodGeo, hoodMat, 9);
+    this.npcHoodMesh.castShadow = true;
+
+    const faceGeo = new THREE.SphereGeometry(0.16, 8, 8);
+    const faceMat = new THREE.MeshToonMaterial({ color: 0xf6c7a6 });
+    this.npcFaceMesh = new THREE.InstancedMesh(faceGeo, faceMat, 9);
+
+    const tempCol = new THREE.Color();
+    for (let i = 0; i < 9; i++) {
+      tempCol.setHex(SURVIVOR_COAT_COLORS[i % SURVIVOR_COAT_COLORS.length]);
+      this.npcCoatMesh.setColorAt(i, tempCol);
+    }
+    if (this.npcCoatMesh.instanceColor) {
+      this.npcCoatMesh.instanceColor.needsUpdate = true;
+    }
+
+    this.group.add(this.npcCoatMesh, this.npcHoodMesh, this.npcFaceMesh);
 
     for (const def of LANE_DEFS) {
       const counterZ = 5.0;
-      const counter = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.72, 0.8), benchMat);
-      counter.position.set(def.x, 0.36, counterZ);
-      counter.castShadow = true;
-      counter.receiveShadow = true;
-      scene.add(counter);
-
-      // Delivery ring on player side of counter (inside base)
       const dropPos = new THREE.Vector3(def.x, 0.085, counterZ - 1.35);
+
       const ringGeo = new THREE.RingGeometry(0.82, 1.02, 24);
       ringGeo.rotateX(-Math.PI / 2);
       const ringMesh = new THREE.Mesh(
@@ -70,33 +131,9 @@ export class CustomerQueue {
         }),
       );
       ringMesh.position.copy(dropPos);
-      scene.add(ringMesh);
+      this.group.add(ringMesh);
 
-      // Cash stack pile just beside the delivery ring
       const cashPilePos = new THREE.Vector3(def.x + 0.78, 0.08, counterZ - 0.65);
-      const billMeshes: THREE.Mesh[] = [];
-      for (let b = 0; b < 24; b++) {
-        const bill = new THREE.Mesh(billGeo, billMat);
-        bill.position.set(
-          cashPilePos.x + (b % 2) * 0.22 - 0.11,
-          0.08 + Math.floor(b / 2) * 0.09,
-          cashPilePos.z,
-        );
-        bill.visible = false;
-        bill.castShadow = true;
-        scene.add(bill);
-        billMeshes.push(bill);
-      }
-
-      // 3 queued survivor NPCs waiting outside counter along southern snow road
-      const queueMeshes: THREE.Group[] = [];
-      for (let q = 0; q < 3; q++) {
-        const npc = this.buildNpcMesh(q);
-        npc.position.set(def.x, 0, counterZ + 1.35 + q * 1.65);
-        npc.rotation.y = Math.PI; // Facing counter/north
-        scene.add(npc);
-        queueMeshes.push(npc);
-      }
 
       const bubbleEl = document.createElement('div');
       bubbleEl.className = 'order-bubble';
@@ -109,12 +146,10 @@ export class CustomerQueue {
         dropPos,
         cashPilePos,
         ringMesh,
-        billMeshes,
         cashPileAmount: 0,
         needed: need,
         delivered: 0,
         rewardPerUnit: def.pay,
-        queueMeshes,
         bubbleEl,
         serveCooldown: 0,
         magnetCooldown: 0,
@@ -122,32 +157,10 @@ export class CustomerQueue {
     }
   }
 
-  private buildNpcMesh(variant: number): THREE.Group {
-    const g = new THREE.Group();
-    const coatHex = variant % 2 === 0 ? 0x0284c7 : 0x0ea5e9;
-    const coat = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.24, 0.34, 0.62, 8),
-      new THREE.MeshToonMaterial({ color: coatHex }),
-    );
-    coat.position.y = 0.45;
-    coat.castShadow = true;
-    g.add(coat);
-
-    const hood = new THREE.Mesh(
-      new THREE.SphereGeometry(0.25, 8, 8),
-      new THREE.MeshToonMaterial({ color: 0x38bdf8 }),
-    );
-    hood.position.y = 0.94;
-    hood.castShadow = true;
-    g.add(hood);
-
-    const face = new THREE.Mesh(
-      new THREE.SphereGeometry(0.16, 8, 8),
-      new THREE.MeshToonMaterial({ color: 0xf6c7a6 }),
-    );
-    face.position.set(0, 0.94, 0.11);
-    g.add(face);
-    return g;
+  applyQuality(quality: GraphicsQuality): void {
+    const isHigh = quality === 'high';
+    this.npcFaceMesh.visible = isHigh;
+    this.npcHoodMesh.visible = isHigh;
   }
 
   update(
@@ -162,6 +175,9 @@ export class CustomerQueue {
   ): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
+    const nowTime = performance.now() * 0.005;
+
+    let totalBills = 0;
 
     for (let li = 0; li < this.lanes.length; li++) {
       const lane = this.lanes[li];
@@ -170,9 +186,29 @@ export class CustomerQueue {
       lane.serveCooldown = Math.max(0, lane.serveCooldown - dt);
       lane.magnetCooldown = Math.max(0, lane.magnetCooldown - dt);
 
-      // Gentle idle bob on queued survivors
-      for (let q = 0; q < lane.queueMeshes.length; q++) {
-        lane.queueMeshes[q].position.y = Math.abs(Math.sin(performance.now() * 0.004 + q + li)) * 0.06;
+      // Animate 3 queued survivors per lane
+      for (let q = 0; q < 3; q++) {
+        const npcIdx = li * 3 + q;
+        const baseZ = 5.0 + 1.35 + q * 1.65;
+        // Idle bob & subtle shivering motion
+        const bobY = Math.abs(Math.sin(nowTime + q + li)) * 0.05;
+        const shiverX = (Math.sin(nowTime * 5 + npcIdx) * 0.02) * (q === 0 ? 0.5 : 1.0);
+
+        // Coat
+        this.dummy.position.set(def.x + shiverX, 0.45 + bobY, baseZ);
+        this.dummy.rotation.set(0, Math.PI, 0);
+        this.dummy.updateMatrix();
+        this.npcCoatMesh.setMatrixAt(npcIdx, this.dummy.matrix);
+
+        // Hood
+        this.dummy.position.set(def.x + shiverX, 0.94 + bobY, baseZ);
+        this.dummy.updateMatrix();
+        this.npcHoodMesh.setMatrixAt(npcIdx, this.dummy.matrix);
+
+        // Face
+        this.dummy.position.set(def.x + shiverX, 0.94 + bobY, baseZ - 0.11);
+        this.dummy.updateMatrix();
+        this.npcFaceMesh.setMatrixAt(npcIdx, this.dummy.matrix);
       }
 
       const distDrop = Math.hypot(playerPos.x - lane.dropPos.x, playerPos.z - lane.dropPos.z);
@@ -180,7 +216,6 @@ export class CustomerQueue {
       lane.ringMesh.scale.setScalar(inDrop ? 1.12 : 1.0);
 
       if (inDrop && lane.serveCooldown <= 0 && lane.delivered < lane.needed) {
-        // Pull from backpack first, otherwise from base processed stockpile
         const fromPack = stack.popLastOf(lane.kind);
         let tookItem = Boolean(fromPack);
         if (!tookItem && baseCounts[lane.kind] > 0) {
@@ -228,9 +263,18 @@ export class CustomerQueue {
         particles.burst(playerPos.x, 1.3, playerPos.z, 0x4ade80, 4, 2.8, 0.65);
       }
 
-      const visibleBills = Math.min(lane.billMeshes.length, Math.ceil(lane.cashPileAmount / 2));
-      for (let b = 0; b < lane.billMeshes.length; b++) {
-        lane.billMeshes[b].visible = b < visibleBills;
+      // Populate instanced bills for this lane
+      const visibleBills = Math.min(24, Math.ceil(lane.cashPileAmount / 2));
+      for (let b = 0; b < visibleBills && totalBills < 72; b++) {
+        this.dummy.position.set(
+          lane.cashPilePos.x + (b % 2) * 0.22 - 0.11,
+          0.08 + Math.floor(b / 2) * 0.09,
+          lane.cashPilePos.z,
+        );
+        this.dummy.rotation.set(0, 0, 0);
+        this.dummy.updateMatrix();
+        this.billInstancedMesh.setMatrixAt(totalBills, this.dummy.matrix);
+        totalBills++;
       }
 
       // Project speech bubble over front customer
@@ -245,6 +289,15 @@ export class CustomerQueue {
         lane.bubbleEl.style.opacity = '1';
         lane.bubbleEl.style.transform = `translate(-50%, -100%) translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px)`;
       }
+    }
+
+    this.npcCoatMesh.instanceMatrix.needsUpdate = true;
+    this.npcHoodMesh.instanceMatrix.needsUpdate = true;
+    this.npcFaceMesh.instanceMatrix.needsUpdate = true;
+
+    this.billInstancedMesh.count = totalBills;
+    if (totalBills > 0) {
+      this.billInstancedMesh.instanceMatrix.needsUpdate = true;
     }
   }
 }
