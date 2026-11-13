@@ -8,6 +8,8 @@ export interface TreeNode {
   z: number;
   scale: number;
   rotY: number;
+  tiltX: number;
+  tiltZ: number;
   hp: number;
   maxHp: number;
   alive: boolean;
@@ -66,12 +68,16 @@ export class TreeCluster {
 
       const scale = 0.82 + rand() * 0.45;
       const rotY = rand() * Math.PI * 2;
+      const tiltX = (rand() - 0.5) * 0.11;
+      const tiltZ = (rand() - 0.5) * 0.11;
       this.trees.push({
         id: this.trees.length,
         x,
         z,
         scale,
         rotY,
+        tiltX,
+        tiltZ,
         hp: GAME_CONFIG.forest.treeMaxHp,
         maxHp: GAME_CONFIG.forest.treeMaxHp,
         alive: true,
@@ -135,10 +141,10 @@ export class TreeCluster {
       return;
     }
 
-    const shake = tree.shakeTimer > 0 ? Math.sin(tree.shakeTimer * 55) * 0.09 : 0;
+    const wobble = tree.shakeTimer > 0 ? Math.sin(tree.shakeTimer * 44) * (tree.shakeTimer / 0.35) * 0.16 : 0;
     const hpRatio = 0.72 + 0.28 * (tree.hp / tree.maxHp);
     this.dummy.position.set(tree.x, 0, tree.z);
-    this.dummy.rotation.set(shake, tree.rotY, shake * 0.8);
+    this.dummy.rotation.set(tree.tiltX + wobble, tree.rotY, tree.tiltZ + wobble * 0.75);
     this.dummy.scale.set(tree.scale * hpRatio, tree.scale * hpRatio, tree.scale * hpRatio);
     this.dummy.updateMatrix();
 

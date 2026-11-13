@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GAME_CONFIG } from '../config/gameConfig';
 import { ObjectPool } from '../core/ObjectPool';
 import type { GraphicsQuality } from '../core/QualitySettings';
@@ -40,30 +41,72 @@ export class TurretManager {
     ];
 
     const baseMat = new THREE.MeshToonMaterial({ color: 0x78350f });
-    const stoneMat = new THREE.MeshToonMaterial({ color: 0x64748b });
     const bowMat = new THREE.MeshToonMaterial({ color: 0xf59e0b });
 
     for (const def of slotDefs) {
       const group = new THREE.Group();
       group.position.set(def.x, 0, def.z);
 
-      const plinth = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.45, 1.15), stoneMat);
-      plinth.name = 'turret_detail';
-      plinth.position.y = 0.22;
-      plinth.castShadow = true;
-      group.add(plinth);
+      // Merged static tower plinth (stone base + timber tower merged into 1 draw call)
+      const plinthGeo = new THREE.BoxGeometry(1.2, 0.45, 1.2);
+      plinthGeo.translate(0, 0.22, 0);
+      const towerGeo = new THREE.CylinderGeometry(0.32, 0.46, 1.2, 6);
+      towerGeo.translate(0, 1.05, 0);
+      const mergedBaseGeo = mergeGeometries([plinthGeo, towerGeo]) || plinthGeo;
+      const baseMesh = new THREE.Mesh(mergedBaseGeo, baseMat);
+      baseMesh.castShadow = true;
+      baseMesh.receiveShadow = true;
+      group.add(baseMesh);
 
-      const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.46, 1.2, 6), baseMat);
-      tower.position.y = 1.05;
-      tower.castShadow = true;
-      group.add(tower);
-
+      // Swivel head with rotating turntable disc, tiller, recurve limbs, quiver, and taut string
       const head = new THREE.Group();
-      head.position.y = 1.75;
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.24, 0.85), baseMat);
-      const arms = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.12, 0.16), bowMat);
-      arms.position.z = 0.26;
-      head.add(body, arms);
+      head.position.y = 1.72;
+
+      // 1. Swivel turntable plate disc (rotates with head!)
+      const turntableGeo = new THREE.CylinderGeometry(0.46, 0.46, 0.08, 10);
+      turntableGeo.translate(0, -0.04, 0);
+
+      // 2. Crossbow wooden stock / tiller
+      const stockGeo = new THREE.BoxGeometry(0.24, 0.22, 0.95);
+      stockGeo.translate(0, 0.1, -0.05);
+
+      // 3. Side-mounted quiver
+      const quiverGeo = new THREE.CylinderGeometry(0.09, 0.07, 0.54, 6);
+      quiverGeo.rotateX(0.4);
+      quiverGeo.translate(0.22, 0.12, -0.2);
+
+      const mergedHeadWood = mergeGeometries([turntableGeo, stockGeo, quiverGeo]) || stockGeo;
+      const headWoodMesh = new THREE.Mesh(mergedHeadWood, baseMat);
+      headWoodMesh.castShadow = true;
+      head.add(headWoodMesh);
+
+      // 4. Bow recurve limbs
+      const limbL = new THREE.BoxGeometry(0.62, 0.12, 0.12);
+      limbL.rotateY(0.25);
+      limbL.translate(-0.32, 0.12, 0.32);
+
+      const limbR = new THREE.BoxGeometry(0.62, 0.12, 0.12);
+      limbR.rotateY(-0.25);
+      limbR.translate(0.32, 0.12, 0.32);
+
+      // 5. Taut bowstring (connecting tips back to the trigger latch)
+      const stringL = new THREE.CylinderGeometry(0.015, 0.015, 0.64, 4);
+      stringL.rotateZ(1.15);
+      stringL.translate(-0.31, 0.12, 0.21);
+
+      const stringR = new THREE.CylinderGeometry(0.015, 0.015, 0.64, 4);
+      stringR.rotateZ(-1.15);
+      stringR.translate(0.31, 0.12, 0.21);
+
+      // 6. Fletched arrows in quiver
+      const arrowFletch = new THREE.BoxGeometry(0.08, 0.16, 0.08);
+      arrowFletch.translate(0.22, 0.36, -0.32);
+
+      const mergedBowGeo = mergeGeometries([limbL, limbR, stringL, stringR, arrowFletch]) || limbL;
+      const bowMesh = new THREE.Mesh(mergedBowGeo, bowMat);
+      bowMesh.castShadow = true;
+      head.add(bowMesh);
+
       group.add(head);
 
       group.visible = def.unlocked;

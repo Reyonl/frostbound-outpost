@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GAME_CONFIG } from '../config/gameConfig';
 import type { GraphicsQuality } from '../core/QualitySettings';
 import type { CarryType, StackSystem } from '../systems/StackSystem';
@@ -15,6 +16,18 @@ export interface StationConfig {
   processDuration: number;
 }
 
+interface SmokePuff {
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  life: number;
+  maxLife: number;
+  scale: number;
+}
+
 export class Station {
   readonly config: StationConfig;
   readonly group = new THREE.Group();
@@ -26,15 +39,24 @@ export class Station {
 
   private readonly ringMesh: THREE.Mesh;
   private readonly activeSpinner: THREE.Mesh;
-  private awning?: THREE.Mesh;
   private readonly outputInstanced: THREE.InstancedMesh;
   private readonly badgeCanvas: HTMLCanvasElement;
   private readonly badgeCtx: CanvasRenderingContext2D;
   private readonly badgeTexture: THREE.CanvasTexture;
 
+  private readonly smokeInstanced: THREE.InstancedMesh;
+  private readonly smokePuffs: SmokePuff[] = [];
+  private readonly chimneyPos: THREE.Vector3;
+  private readonly sawdustInstanced?: THREE.InstancedMesh;
+  private readonly sawdustPuffs: { x: number; y: number; z: number; vy: number; vx: number }[] = [];
+  private readonly windowMat?: THREE.MeshToonMaterial;
+
   private unloadTimer = 0;
   private processTimer = 0;
   private badgeLastValue = -1;
+  private animTime = 0;
+  private quality: GraphicsQuality = 'high';
+  private readonly dummy = new THREE.Object3D();
 
   constructor(scene: THREE.Scene, config: StationConfig) {
     this.config = config;
@@ -47,43 +69,170 @@ export class Station {
       config.position.z + config.dropOffset.z,
     );
 
+    const timberGeoList: THREE.BufferGeometry[] = [];
+    const stoneGeoList: THREE.BufferGeometry[] = [];
+
     // Station workbench platform
-    const benchMat = new THREE.MeshToonMaterial({ color: 0x92400e });
-    const bench = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.55, 1.6), benchMat);
-    bench.position.y = 0.28;
-    bench.castShadow = true;
-    bench.receiveShadow = true;
-    this.group.add(bench);
+    const benchGeo = new THREE.BoxGeometry(2.3, 0.55, 1.6);
+    benchGeo.translate(0, 0.28, 0);
+    timberGeoList.push(benchGeo);
 
-    // Roof/awning or chimney detail depending on station type
-    const roofMat = new THREE.MeshToonMaterial({ color: config.accentColor });
+    const steelMat = new THREE.MeshToonMaterial({ color: 0x94a3b8 });
+
     if (config.id === 'sawmill') {
-      const saw = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.45, 0.45, 0.08, 12),
-        new THREE.MeshToonMaterial({ color: 0xe2e8f0 }),
-      );
-      saw.rotation.z = Math.PI / 2;
-      saw.position.set(-0.35, 0.85, 0);
-      this.group.add(saw);
-      this.activeSpinner = saw;
+      this.chimneyPos = new THREE.Vector3(-0.85, 2.35, 0.45);
 
-      this.awning = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.16, 1.7), roofMat);
-      this.awning.position.set(0, 1.55, 0);
-      this.awning.castShadow = true;
-      this.group.add(this.awning);
+      // 1. Toothed circular saw blade (cylinder disk + 8 sharp radial teeth merged)
+      const diskGeo = new THREE.CylinderGeometry(0.44, 0.44, 0.05, 12);
+      diskGeo.rotateZ(Math.PI / 2);
+      const teethList: THREE.BufferGeometry[] = [diskGeo];
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * Math.PI * 2;
+        const tooth = new THREE.BoxGeometry(0.06, 0.12, 0.12);
+        tooth.rotateX(ang);
+        tooth.translate(0, Math.sin(ang) * 0.42, Math.cos(ang) * 0.42);
+        teethList.push(tooth);
+      }
+      const axleGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.28, 8);
+      axleGeo.rotateZ(Math.PI / 2);
+      teethList.push(axleGeo);
+
+      const mergedBladeGeo = mergeGeometries(teethList) || diskGeo;
+      this.activeSpinner = new THREE.Mesh(mergedBladeGeo, steelMat);
+      this.activeSpinner.position.set(-0.35, 0.88, 0);
+      this.activeSpinner.castShadow = true;
+      this.group.add(this.activeSpinner);
+
+      // 2. Timber roof & support posts
+      const awningGeo = new THREE.BoxGeometry(2.4, 0.16, 1.7);
+      awningGeo.translate(0, 1.55, 0);
+      timberGeoList.push(awningGeo);
+
+      const post1 = new THREE.BoxGeometry(0.14, 1.1, 0.14);
+      post1.translate(-1.05, 1.05, -0.72);
+      const post2 = new THREE.BoxGeometry(0.14, 1.1, 0.14);
+      post2.translate(-1.05, 1.05, 0.72);
+      timberGeoList.push(post1, post2);
+
+      // 3. Stacked log pile beside the sawmill
+      for (let i = 0; i < 3; i++) {
+        const log = new THREE.CylinderGeometry(0.16, 0.16, 1.25, 7);
+        log.rotateX(Math.PI / 2);
+        if (i === 0) log.translate(1.22, 0.16, 0.35);
+        else if (i === 1) log.translate(1.22, 0.16, -0.35);
+        else log.translate(1.22, 0.42, 0);
+        timberGeoList.push(log);
+      }
+
+      // 4. Stone chimney on roof
+      const chimneyGeo = new THREE.BoxGeometry(0.38, 1.1, 0.38);
+      chimneyGeo.translate(-0.85, 1.85, 0.45);
+      const chimneyRim = new THREE.BoxGeometry(0.46, 0.12, 0.46);
+      chimneyRim.translate(-0.85, 2.38, 0.45);
+      stoneGeoList.push(chimneyGeo, chimneyRim);
+
+      // 5. Instanced sawdust particles
+      const sawdustGeo = new THREE.BoxGeometry(0.06, 0.06, 0.06);
+      const sawdustMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
+      this.sawdustInstanced = new THREE.InstancedMesh(sawdustGeo, sawdustMat, 8);
+      this.sawdustInstanced.visible = false;
+      this.group.add(this.sawdustInstanced);
+      for (let i = 0; i < 8; i++) {
+        this.sawdustPuffs.push({
+          x: -0.35 + (Math.random() - 0.5) * 0.2,
+          y: 0.85,
+          z: (Math.random() - 0.5) * 0.2,
+          vx: (Math.random() - 0.5) * 1.4,
+          vy: 0.8 + Math.random() * 1.2,
+        });
+      }
     } else {
-      const smoker = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.2, 1.0), roofMat);
-      smoker.position.set(-0.4, 0.9, 0);
-      smoker.castShadow = true;
-      this.group.add(smoker);
+      this.chimneyPos = new THREE.Vector3(-0.45, 2.15, -0.35);
 
-      const glow = new THREE.Mesh(
-        new THREE.BoxGeometry(0.42, 0.35, 0.1),
-        new THREE.MeshBasicMaterial({ color: 0xf97316 }),
-      );
-      glow.position.set(-0.4, 0.65, 0.52);
-      this.group.add(glow);
-      this.activeSpinner = glow;
+      // 1. Smokehouse enclosure
+      const houseGeo = new THREE.BoxGeometry(1.25, 1.35, 1.15);
+      houseGeo.translate(-0.4, 0.95, 0);
+      timberGeoList.push(houseGeo);
+
+      // Roof peak
+      const roofPeak = new THREE.ConeGeometry(1.05, 0.55, 4);
+      roofPeak.rotateY(Math.PI / 4);
+      roofPeak.translate(-0.4, 1.85, 0);
+      timberGeoList.push(roofPeak);
+
+      // 2. Hanging cured meats under front awning
+      const meatGeoList: THREE.BufferGeometry[] = [];
+      const meatMat = new THREE.MeshToonMaterial({ color: 0x991b1b });
+      for (let i = 0; i < 3; i++) {
+        const mx = -0.15 - i * 0.28;
+        const ham = new THREE.BoxGeometry(0.16, 0.32, 0.18);
+        ham.translate(mx, 0.72 + (i % 2) * 0.08, 0.62);
+        meatGeoList.push(ham);
+      }
+      const mergedMeatGeo = mergeGeometries(meatGeoList) || meatGeoList[0];
+      this.activeSpinner = new THREE.Mesh(mergedMeatGeo, meatMat);
+      this.activeSpinner.castShadow = true;
+      this.group.add(this.activeSpinner);
+
+      // 3. Warm glowing window (emissive material, NO dynamic lights!)
+      const winGeo = new THREE.PlaneGeometry(0.48, 0.42);
+      this.windowMat = new THREE.MeshToonMaterial({
+        color: 0xfbbf24,
+        emissive: 0xf59e0b,
+        emissiveIntensity: 1.2,
+      });
+      const winMesh = new THREE.Mesh(winGeo, this.windowMat);
+      winMesh.position.set(-0.4, 1.05, 0.59);
+      this.group.add(winMesh);
+
+      // 4. Stone chimney on roof
+      const chimneyGeo = new THREE.BoxGeometry(0.36, 1.05, 0.36);
+      chimneyGeo.translate(-0.45, 1.75, -0.35);
+      const chimneyRim = new THREE.BoxGeometry(0.44, 0.12, 0.44);
+      chimneyRim.translate(-0.45, 2.25, -0.35);
+      stoneGeoList.push(chimneyGeo, chimneyRim);
+    }
+
+    // Merge static timber geometry
+    const timberMat = new THREE.MeshToonMaterial({ color: 0x78350f });
+    const mergedTimber = mergeGeometries(timberGeoList) || timberGeoList[0];
+    const timberMesh = new THREE.Mesh(mergedTimber, timberMat);
+    timberMesh.castShadow = true;
+    timberMesh.receiveShadow = true;
+    this.group.add(timberMesh);
+
+    // Merge static stone geometry
+    if (stoneGeoList.length > 0) {
+      const stoneMat = new THREE.MeshToonMaterial({ color: 0x64748b });
+      const mergedStone = mergeGeometries(stoneGeoList) || stoneGeoList[0];
+      const stoneMesh = new THREE.Mesh(mergedStone, stoneMat);
+      stoneMesh.castShadow = true;
+      stoneMesh.receiveShadow = true;
+      this.group.add(stoneMesh);
+    }
+
+    // Instanced chimney smoke puffs (6 puffs per station merged into 1 draw call)
+    const smokeGeo = new THREE.DodecahedronGeometry(0.18, 0);
+    const smokeMat = new THREE.MeshBasicMaterial({
+      color: 0xe2e8f0,
+      transparent: true,
+      opacity: 0.38,
+      depthWrite: false,
+    });
+    this.smokeInstanced = new THREE.InstancedMesh(smokeGeo, smokeMat, 6);
+    this.group.add(this.smokeInstanced);
+    for (let i = 0; i < 6; i++) {
+      this.smokePuffs.push({
+        x: this.chimneyPos.x + (Math.random() - 0.5) * 0.12,
+        y: this.chimneyPos.y + i * 0.28,
+        z: this.chimneyPos.z + (Math.random() - 0.5) * 0.12,
+        vx: (Math.random() - 0.5) * 0.12,
+        vy: 0.38 + Math.random() * 0.25,
+        vz: (Math.random() - 0.5) * 0.12,
+        life: i * 0.45,
+        maxLife: 2.8,
+        scale: 0.6 + Math.random() * 0.5,
+      });
     }
 
     // Output shelf stack visuals merged into InstancedMesh (saves up to 22 draw calls)
@@ -141,11 +290,16 @@ export class Station {
   }
 
   applyQuality(quality: GraphicsQuality): void {
-    if (this.awning) this.awning.visible = quality === 'high';
+    this.quality = quality;
+    const isHigh = quality === 'high';
+    this.smokeInstanced.visible = isHigh;
+    if (this.sawdustInstanced) {
+      this.sawdustInstanced.visible = isHigh && this.rawQueue > 0;
+    }
   }
 
   private redrawBadge(): void {
-    const val = this.rawQueue + this.processedCount * 1000;
+    const val = this.processedCount;
     if (val === this.badgeLastValue) return;
     this.badgeLastValue = val;
 
@@ -179,11 +333,12 @@ export class Station {
       return;
     }
     this.group.visible = true;
+    this.animTime += dt;
 
     const dist = Math.hypot(playerPos.x - this.dropWorldPos.x, playerPos.z - this.dropWorldPos.z);
     const playerInside = dist <= GAME_CONFIG.stations.dropZoneRadius;
 
-    this.ringMesh.scale.setScalar(playerInside ? 1.08 : 1 + Math.sin(performance.now() * 0.004) * 0.04);
+    this.ringMesh.scale.setScalar(playerInside ? 1.08 : 1 + Math.sin(this.animTime * 4.0) * 0.04);
     (this.ringMesh.material as THREE.MeshBasicMaterial).color.setHex(playerInside ? 0x4ade80 : 0x38bdf8);
 
     if (playerInside) {
@@ -212,12 +367,14 @@ export class Station {
       this.unloadTimer = 0;
     }
 
-    if (this.rawQueue > 0) {
+    const isProcessing = this.rawQueue > 0;
+    if (isProcessing) {
       this.processTimer += dt;
       if (this.config.id === 'sawmill') {
-        this.activeSpinner.rotation.x += dt * 16;
+        this.activeSpinner.rotation.x += dt * 32;
       } else {
-        this.activeSpinner.scale.setScalar(1 + Math.sin(performance.now() * 0.02) * 0.14);
+        // Hanging meat gentle swaying
+        this.activeSpinner.rotation.z = Math.sin(this.animTime * 3.5) * 0.12;
       }
 
       if (this.processTimer >= this.config.processDuration) {
@@ -225,6 +382,67 @@ export class Station {
         this.rawQueue -= 1;
         this.processedCount += 1;
         onProduced(this.config.inputType, 1);
+      }
+    } else if (this.config.id === 'smokehouse') {
+      this.activeSpinner.rotation.z = Math.sin(this.animTime * 1.5) * 0.04;
+    }
+
+    // Warm pulsing window glow on smokehouse
+    if (this.windowMat) {
+      this.windowMat.emissiveIntensity = 1.1 + Math.sin(this.animTime * 2.8) * 0.25;
+    }
+
+    // Update chimney smoke puffs on High Quality
+    if (this.quality === 'high') {
+      for (let i = 0; i < this.smokePuffs.length; i++) {
+        const p = this.smokePuffs[i];
+        p.life += dt;
+        p.y += p.vy * dt;
+        p.x += p.vx * dt + Math.sin(p.life * 2.2) * 0.015;
+        p.z += p.vz * dt + Math.cos(p.life * 1.8) * 0.015;
+        p.scale += dt * 0.22;
+
+        if (p.life >= p.maxLife || p.y > this.chimneyPos.y + 1.8) {
+          p.life = 0;
+          p.x = this.chimneyPos.x + (Math.random() - 0.5) * 0.12;
+          p.y = this.chimneyPos.y;
+          p.z = this.chimneyPos.z + (Math.random() - 0.5) * 0.12;
+          p.scale = 0.55 + Math.random() * 0.3;
+        }
+
+        this.dummy.position.set(p.x, p.y, p.z);
+        this.dummy.rotation.set(p.life, p.life * 0.8, 0);
+        this.dummy.scale.setScalar(p.scale);
+        this.dummy.updateMatrix();
+        this.smokeInstanced.setMatrixAt(i, this.dummy.matrix);
+      }
+      this.smokeInstanced.instanceMatrix.needsUpdate = true;
+
+      // Update sawdust spray if sawmill is processing
+      if (this.sawdustInstanced) {
+        this.sawdustInstanced.visible = isProcessing;
+        if (isProcessing) {
+          for (let i = 0; i < this.sawdustPuffs.length; i++) {
+            const s = this.sawdustPuffs[i];
+            s.x += s.vx * dt;
+            s.y += s.vy * dt;
+            s.vy -= 9.8 * dt * 0.65; // gravity arc
+
+            if (s.y < 0.3) {
+              s.x = -0.35 + (Math.random() - 0.5) * 0.18;
+              s.y = 0.88;
+              s.z = (Math.random() - 0.5) * 0.18;
+              s.vx = (Math.random() - 0.5) * 1.5;
+              s.vy = 0.8 + Math.random() * 1.4;
+            }
+
+            this.dummy.position.set(s.x, s.y, s.z);
+            this.dummy.scale.setScalar(0.7 + Math.random() * 0.5);
+            this.dummy.updateMatrix();
+            this.sawdustInstanced.setMatrixAt(i, this.dummy.matrix);
+          }
+          this.sawdustInstanced.instanceMatrix.needsUpdate = true;
+        }
       }
     }
 

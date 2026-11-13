@@ -55,6 +55,7 @@ export class CustomerQueue {
   readonly npcCoatMesh: THREE.InstancedMesh;
   readonly npcHoodMesh: THREE.InstancedMesh;
   readonly npcFaceMesh: THREE.InstancedMesh;
+  readonly npcScarfMesh: THREE.InstancedMesh;
   readonly ringInstancedMesh: THREE.InstancedMesh;
   private readonly dummy = new THREE.Object3D();
 
@@ -105,16 +106,28 @@ export class CustomerQueue {
     const faceMat = new THREE.MeshToonMaterial({ color: 0xf6c7a6 });
     this.npcFaceMesh = new THREE.InstancedMesh(faceGeo, faceMat, 9);
 
+    const scarfGeo = new THREE.CylinderGeometry(0.26, 0.28, 0.09, 8);
+    const scarfMat = new THREE.MeshToonMaterial({ color: 0xffffff });
+    this.npcScarfMesh = new THREE.InstancedMesh(scarfGeo, scarfMat, 9);
+    this.npcScarfMesh.castShadow = true;
+
+    const SURVIVOR_SCARF_COLORS = [0xf59e0b, 0xef4444, 0x38bdf8, 0xf97316, 0xa855f7, 0x10b981];
     const tempCol = new THREE.Color();
     for (let i = 0; i < 9; i++) {
       tempCol.setHex(SURVIVOR_COAT_COLORS[i % SURVIVOR_COAT_COLORS.length]);
       this.npcCoatMesh.setColorAt(i, tempCol);
+
+      tempCol.setHex(SURVIVOR_SCARF_COLORS[i % SURVIVOR_SCARF_COLORS.length]);
+      this.npcScarfMesh.setColorAt(i, tempCol);
     }
     if (this.npcCoatMesh.instanceColor) {
       this.npcCoatMesh.instanceColor.needsUpdate = true;
     }
+    if (this.npcScarfMesh.instanceColor) {
+      this.npcScarfMesh.instanceColor.needsUpdate = true;
+    }
 
-    this.group.add(this.npcCoatMesh, this.npcHoodMesh, this.npcFaceMesh);
+    this.group.add(this.npcCoatMesh, this.npcHoodMesh, this.npcFaceMesh, this.npcScarfMesh);
 
     // 4. Instanced Delivery Rings (3 counter lanes merged into 1 draw call)
     const ringGeo = new THREE.RingGeometry(0.82, 1.02, 24);
@@ -167,6 +180,7 @@ export class CustomerQueue {
     const isHigh = quality === 'high';
     this.npcFaceMesh.visible = isHigh;
     this.npcHoodMesh.visible = isHigh;
+    this.npcScarfMesh.visible = isHigh;
   }
 
   update(
@@ -218,6 +232,11 @@ export class CustomerQueue {
         this.dummy.position.set(def.x + shiverX, 0.94 + bobY, baseZ);
         this.dummy.updateMatrix();
         this.npcHoodMesh.setMatrixAt(npcIdx, this.dummy.matrix);
+
+        // Scarf
+        this.dummy.position.set(def.x + shiverX, 0.72 + bobY, baseZ);
+        this.dummy.updateMatrix();
+        this.npcScarfMesh.setMatrixAt(npcIdx, this.dummy.matrix);
 
         // Face
         this.dummy.position.set(def.x + shiverX, 0.94 + bobY, baseZ - 0.11);
@@ -314,6 +333,7 @@ export class CustomerQueue {
     this.npcCoatMesh.instanceMatrix.needsUpdate = true;
     this.npcHoodMesh.instanceMatrix.needsUpdate = true;
     this.npcFaceMesh.instanceMatrix.needsUpdate = true;
+    this.npcScarfMesh.instanceMatrix.needsUpdate = true;
     this.ringInstancedMesh.instanceMatrix.needsUpdate = true;
 
     this.billInstancedMesh.count = totalBills;

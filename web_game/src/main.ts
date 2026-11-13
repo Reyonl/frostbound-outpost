@@ -18,6 +18,7 @@ import { HelperNPC } from './entities/HelperNPC';
 import { MineRail } from './entities/MineRail';
 import { Player } from './entities/Player';
 import { Station } from './entities/Station';
+import { PropsCluster } from './entities/PropsCluster';
 import { TreeCluster } from './entities/TreeCluster';
 import { TurretManager } from './entities/TurretManager';
 import { CombatSystem } from './systems/CombatSystem';
@@ -63,6 +64,7 @@ export class FrostboundGame {
   private readonly trees: TreeCluster;
   private readonly enemyMgr: EnemyManager;
   private readonly turretMgr: TurretManager;
+  private readonly props: PropsCluster;
   private readonly particles: ParticleSystem;
   private readonly floatingText: FloatingTextSystem;
   private readonly randomEvents: RandomEventSystem;
@@ -114,6 +116,7 @@ export class FrostboundGame {
       this.turretMgr.applyQuality(q);
       this.sawmill.applyQuality(q);
       this.smokehouse.applyQuality(q);
+      this.props.applyQuality(q);
       this.hud.setQualityBadge(q);
     });
 
@@ -155,6 +158,8 @@ export class FrostboundGame {
     this.enemyMgr.applyQuality(this.qualityMgr.quality);
     this.turretMgr = new TurretManager(this.engine.scene);
     this.turretMgr.applyQuality(this.qualityMgr.quality);
+    this.props = new PropsCluster(this.engine.scene);
+    this.props.applyQuality(this.qualityMgr.quality);
     this.particles = new ParticleSystem(this.engine.scene);
     this.floatingText = new FloatingTextSystem(hudRoot);
     this.randomEvents = new RandomEventSystem(this.engine.scene);
@@ -238,7 +243,14 @@ export class FrostboundGame {
             let cat = 'other';
             let curr: THREE.Object3D | null = obj;
             while (curr) {
-              if (curr === this.player.group || curr === this.helperNpc.group) {
+              if (
+                curr === this.player.group ||
+                curr === this.helperNpc.group ||
+                obj === this.customerQueue.npcCoatMesh ||
+                obj === this.customerQueue.npcHoodMesh ||
+                obj === this.customerQueue.npcFaceMesh ||
+                obj === this.customerQueue.npcScarfMesh
+              ) {
                 cat = 'characters';
                 break;
               }
@@ -254,7 +266,9 @@ export class FrostboundGame {
                 curr === this.sawmill.group ||
                 curr === this.smokehouse.group ||
                 curr === this.mineRail.group ||
-                curr === this.customerQueue.group
+                curr === this.customerQueue.group ||
+                curr === this.props.group ||
+                this.turretMgr.slots.some((s) => curr === s.group)
               ) {
                 cat = 'buildings';
                 break;

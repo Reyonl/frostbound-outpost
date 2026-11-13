@@ -4,10 +4,17 @@ import argparse
 import functools
 import http.server
 import json
+import os
+import shutil
 import socketserver
 import threading
 import time
 from pathlib import Path
+
+# Remove outdated global npm chromedriver from PATH to let Selenium Manager use the matching driver
+os.environ["PATH"] = ";".join(
+    p for p in os.environ.get("PATH", "").split(";") if "npm" not in p.lower()
+)
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options as ChromeOptions
