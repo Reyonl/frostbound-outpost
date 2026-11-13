@@ -6,6 +6,7 @@ import { triggerHaptic } from '../core/Haptics';
 import type { CarryType, StackSystem } from '../systems/StackSystem';
 import type { ParticleSystem } from '../systems/ParticleSystem';
 import type { FloatingTextSystem } from '../systems/FloatingTextSystem';
+import { renderSvg } from '../ui/Icons';
 
 interface CounterLane {
   kind: CarryType;
@@ -22,10 +23,10 @@ interface CounterLane {
   advanceTimer: number;
 }
 
-const LANE_DEFS: { kind: CarryType; x: number; icon: string; minNeed: number; maxNeed: number; pay: number }[] = [
-  { kind: 'wood', x: -2.4, icon: '🪵', minNeed: 3, maxNeed: 6, pay: 6 },
-  { kind: 'meat', x: 0.0, icon: '🥩', minNeed: 2, maxNeed: 4, pay: 9 },
-  { kind: 'gold', x: 2.4, icon: '🪙', minNeed: 2, maxNeed: 4, pay: 12 },
+const LANE_DEFS: { kind: CarryType; x: number; minNeed: number; maxNeed: number; pay: number }[] = [
+  { kind: 'wood', x: -2.4, minNeed: 3, maxNeed: 6, pay: 6 },
+  { kind: 'meat', x: 0.0, minNeed: 2, maxNeed: 4, pay: 9 },
+  { kind: 'gold', x: 2.4, minNeed: 2, maxNeed: 4, pay: 12 },
 ];
 
 // 6 distinct Nordic coat colors for survivors
@@ -318,7 +319,7 @@ export class CustomerQueue {
 
       // Project speech bubble over front customer
       const rem = Math.max(0, lane.needed - lane.delivered);
-      lane.bubbleEl.textContent = `${def.icon} ${rem}`;
+      lane.bubbleEl.innerHTML = `<span class="bubble-icon">${renderSvg(lane.kind, 14)}</span><span class="bubble-num">${rem}</span>`;
       this.projVec.set(lane.counterPos.x, 2.15, lane.counterPos.z + 1.3).project(camera);
       if (this.projVec.z > 1) {
         lane.bubbleEl.style.opacity = '0';

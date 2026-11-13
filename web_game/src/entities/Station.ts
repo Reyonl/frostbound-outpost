@@ -135,6 +135,7 @@ export class Station {
       const sawdustGeo = new THREE.BoxGeometry(0.06, 0.06, 0.06);
       const sawdustMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
       this.sawdustInstanced = new THREE.InstancedMesh(sawdustGeo, sawdustMat, 8);
+      this.sawdustInstanced.name = 'particles_sawdust';
       this.sawdustInstanced.visible = false;
       this.group.add(this.sawdustInstanced);
       for (let i = 0; i < 8; i++) {
@@ -220,6 +221,7 @@ export class Station {
       depthWrite: false,
     });
     this.smokeInstanced = new THREE.InstancedMesh(smokeGeo, smokeMat, 6);
+    this.smokeInstanced.name = 'particles_smoke';
     this.group.add(this.smokeInstanced);
     for (let i = 0; i < 6; i++) {
       this.smokePuffs.push({

@@ -27,6 +27,7 @@ export class ParticleSystem {
     const geo = new THREE.BoxGeometry(0.18, 0.18, 0.18);
     const mat = new THREE.MeshToonMaterial({ color: 0xffffff });
     this.instanced = new THREE.InstancedMesh(geo, mat, MAX_PARTICLES);
+    this.instanced.name = 'particles_burst';
     this.instanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.instanced.count = 0;
     this.instanced.frustumCulled = false;
